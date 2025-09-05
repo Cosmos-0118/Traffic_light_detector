@@ -461,6 +461,40 @@ def generate_sample_videos(force=False, fps=18, seconds=5):
     return created, skipped
 
 
+def synthetic_video_specs():
+    """Mapping of synthetic video file names to (image list, effect).
+
+    Used for hosted fallback when encoded mp4 cannot be properly decoded
+    (some Streamlit hosting containers lack certain codecs). In that case
+    we regenerate frames in-memory so motion/effects still appear.
+    """
+    return {
+        'sample_red_light.mp4':
+        (['sample_images/sample_red_light.jpg'], 'zoom'),
+        'sample_yellow_light.mp4':
+        (['sample_images/sample_yellow_light.jpg'], 'pulse'),
+        'sample_green_light.mp4': (['sample_images/sample_green_light.jpg'],
+                                   'panx'),
+        'sample_all_lights.mp4': ([
+            'sample_images/sample_red_light.jpg',
+            'sample_images/sample_yellow_light.jpg',
+            'sample_images/sample_green_light.jpg'
+        ], 'steady'),
+        'sample_multiple_lights.mp4':
+        (['sample_images/sample_multiple_lights.jpg'], 'jitter'),
+        'sample_night_scene.mp4': (['sample_images/sample_night_scene.jpg'],
+                                   'flicker'),
+        'sample_challenging_scene.mp4':
+        (['sample_images/sample_challenging_scene.jpg'], 'crop_jitter'),
+        'sample_red_bottom.mp4': (['sample_images/sample_red_bottom.jpg'],
+                                  'pulse'),
+        'sample_red_left.mp4': (['sample_images/sample_red_left.jpg'], 'zoom'),
+        'sample_red_right.mp4': (['sample_images/sample_red_right.jpg'],
+                                 'zoom'),
+        'sample_red_top.mp4': (['sample_images/sample_red_top.jpg'], 'pulse'),
+    }
+
+
 @st.cache_resource(show_spinner=False)
 def ensure_sample_videos():
     return generate_sample_videos(force=False)
@@ -687,8 +721,41 @@ def process_video(video_path):
         st.error("❌ Could not open video file. Please check the file format.")
         return
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 0
+    fps = cap.get(cv2.CAP_PROP_FPS) or 18
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+
+    # Hosted fallback: if the encoded mp4 yields too few frames (likely codec issue),
+    # rebuild synthetic frames in memory so visual effects remain.
+    in_memory_frames = None
+    if total_frames < 8:  # heuristic: far too small for our 5s synthetic clips
+        fname = Path(video_path).name
+        specs = synthetic_video_specs()
+        if fname in specs:
+            images, effect = specs[fname]
+            imgs = []
+            for rel in images:
+                p = resolve_resource(rel)
+                if not p:
+                    continue
+                img = cv2.imread(p)
+                if img is not None:
+                    imgs.append(img)
+            if imgs:
+                seconds = 5
+                total_frames_target = int(fps * seconds)
+                in_memory_frames = []
+                for i in range(total_frames_target):
+                    if effect == 'steady' and len(imgs) > 1:
+                        idx = int(
+                            (i / total_frames_target) * len(imgs)) % len(imgs)
+                        frame = imgs[idx].copy()
+                    else:
+                        base = imgs[i % len(imgs)].copy()
+                        frame = _apply_effect(base, i, total_frames_target,
+                                              effect)
+                    in_memory_frames.append(frame)
+                total_frames = len(in_memory_frames)
+
     duration = total_frames / fps if fps > 0 else 0
     st.info(
         f"📹 Video Info: {total_frames} frames, {fps:.1f} FPS, {duration:.1f}s duration"
@@ -714,10 +781,18 @@ def process_video(video_path):
     except Exception:
         _supports_kw = False
 
+    frame_iter = 0
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        if in_memory_frames is not None:
+            if frame_iter >= len(in_memory_frames):
+                break
+            frame = in_memory_frames[frame_iter]
+            ret = True
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                break
+        frame_iter += 1
         frame_index += 1
         try:
             if _supports_kw:
