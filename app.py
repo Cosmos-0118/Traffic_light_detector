@@ -1052,10 +1052,17 @@ st.markdown(
 
 # Display environment-specific notice
 if st.session_state.get('is_web_environment', False):
-    st.info(
-        "ℹ️ **Video Performance Notice**: Videos may appear less animated in web browsers compared to running locally. "
-        "This is a known limitation with browser-based video processing. For the best visual experience, "
-        "we recommend running this application on your local machine.")
+    st.markdown("""
+    <div style="padding: 10px 15px; border: 2px solid #f0ad4e; border-radius: 8px; background-color: rgba(240, 173, 78, 0.1); margin: 15px 0;">
+        <h4 style="margin-top: 0; color: #8a6d3b;">⚠️ Important Notice</h4>
+        <p style="margin-bottom: 0; color: #8a6d3b;">
+            <strong>[Best Viewed Locally]:</strong> Video animations may appear static or less fluid in web browsers compared to running locally. 
+            This is a technical limitation of browser-based video processing, not a bug. For optimal performance with smooth animations, 
+            we recommend running this application on your local machine.
+        </p>
+    </div>
+    """,
+                unsafe_allow_html=True)
 
 # Sidebar for controls
 with st.sidebar:
@@ -1192,6 +1199,17 @@ with col1:
             label_visibility="collapsed")
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # Add professional notice about video display differences
+        if st.session_state.get('is_web_environment', False):
+            st.markdown("""
+            <div style="padding: 10px 15px; border: 1px solid #f0ad4e; border-radius: 5px; background-color: rgba(240, 173, 78, 0.1); margin: 10px 0;">
+                <p style="margin: 0; color: #8a6d3b; font-size: 0.9em;">
+                    <strong>Note:</strong> [Video animations may appear static in hosted environments due to browser rendering constraints. For fluid animation and optimal experience, we recommend running this application locally.]
+                </p>
+            </div>
+            """,
+                        unsafe_allow_html=True)
+
         if uploaded_file is not None:
             # Save uploaded file temporarily
             with tempfile.NamedTemporaryFile(
@@ -1310,6 +1328,17 @@ with col1:
         elif sample_type == "🎬 Sample Video":
             st.markdown("### 🎬 Sample Video Detection")
             st.info("Select a sample video to test the detection system.")
+
+            # Add professional notice about video display differences
+            if st.session_state.get('is_web_environment', False):
+                st.markdown("""
+                <div style="padding: 10px 15px; border: 1px solid #f0ad4e; border-radius: 5px; background-color: rgba(240, 173, 78, 0.1); margin: 10px 0;">
+                    <p style="margin: 0; color: #8a6d3b; font-size: 0.9em;">
+                        <strong>Note:</strong> [Video animations may display as static frames in hosted environments due to browser rendering limitations. For optimal visualization with smooth animations, we recommend running this application locally.]
+                    </p>
+                </div>
+                """,
+                            unsafe_allow_html=True)
 
             # Generate synthetic sample videos if missing
             with st.spinner("Preparing synthetic sample videos..."):
@@ -1474,6 +1503,27 @@ with col2:
 
 # Footer
 st.markdown("---")
+
+# Add technical information about local vs web performance
+if st.session_state.get('is_web_environment', False):
+    st.markdown("""
+    <div style='background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; margin-bottom: 20px;'>
+        <h4 style='color: #495057;'>📝 Technical Note on Video Performance</h4>
+        <p style='color: #6c757d;'>
+            <strong>[Browser Limitations]:</strong> When running in hosted environments, video animations may appear less fluid or static compared to local execution. This is due to:
+        </p>
+        <ul style='color: #6c757d;'>
+            <li>Browser rendering limitations for real-time processed frames</li>
+            <li>Network latency between the server and client browser</li>
+            <li>Streamlit's web-based rendering pipeline constraints</li>
+        </ul>
+        <p style='color: #6c757d;'>
+            For optimal video performance with smooth animations and real-time effects, we recommend running this application locally using the installation instructions below.
+        </p>
+    </div>
+    """,
+                unsafe_allow_html=True)
+
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 1rem;'>
     <p><strong>🚦 Traffic Light Detection System</strong></p>
@@ -1487,7 +1537,9 @@ with st.sidebar:
     st.markdown("---")
     if st.checkbox("🔧 Advanced Options"):
         st.markdown("""
-        **Local Testing:**
+        ### 🖥️ Running Locally (Recommended)
+        For optimal performance and smooth video animations:
+        
         1. Install: `pip install streamlit`
         2. Run: `streamlit run app.py`
         3. Open: http://localhost:8501
