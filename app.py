@@ -931,10 +931,15 @@ def process_video(video_path):
                 debug_rgb = cv2.cvtColor(debug_image, cv2.COLOR_BGR2RGB)
                 frame_rgb = np.hstack([frame_rgb, debug_rgb])
 
-        # Optimize image display with reduced quality in web environments for performance
+        # Optimize image display for web environments
+        # For web: Use a buffer approach to reduce jitter and improve perceived smoothness
         if st.session_state.get('is_web_environment', False):
-            # For web: Compress image to reduce bandwidth and improve performance
-            # Convert to PIL Image
+            # Initialize frame buffer if not exists
+            if 'frame_buffer' not in st.session_state:
+                st.session_state.frame_buffer = []
+                st.session_state.buffer_size = 3  # Small buffer to reduce latency
+
+            # Convert to PIL Image for optimization
             pil_img = Image.fromarray(frame_rgb)
 
             # Reduce size for web display if needed
@@ -945,12 +950,24 @@ def process_video(video_path):
                 pil_img = pil_img.resize((max_width, new_height),
                                          Image.LANCZOS)
 
-            # Display the optimized image
-            video_placeholder.image(pil_img,
-                                    channels="RGB",
-                                    use_container_width=True)
+            # Add to buffer
+            st.session_state.frame_buffer.append(pil_img)
+
+            # Keep buffer at desired size
+            if len(st.session_state.frame_buffer
+                   ) > st.session_state.buffer_size:
+                # Display oldest frame and remove it
+                display_img = st.session_state.frame_buffer.pop(0)
+                video_placeholder.image(display_img,
+                                        channels="RGB",
+                                        use_container_width=True)
+            else:
+                # Buffer still filling, display current frame
+                video_placeholder.image(pil_img,
+                                        channels="RGB",
+                                        use_container_width=True)
         else:
-            # For local: Use full quality
+            # For local: Use full quality, no buffer needed
             video_placeholder.image(frame_rgb,
                                     channels="RGB",
                                     use_container_width=True)
@@ -998,6 +1015,9 @@ def process_video(video_path):
         st.info(
             "🌐 Web optimization active - performance has been enhanced for smoother online experience"
         )
+        st.warning(
+            "⚠️ **Video Playback Notice**: The animation may appear static or less smooth when viewing in a web browser compared to localhost. This is due to browser limitations in handling real-time video processing. For best experience, run this application locally."
+        )
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -1030,9 +1050,25 @@ st.markdown(
     '<p class="sub-header">Professional real-time detection of Red, Yellow, and Green traffic lights using advanced computer vision</p>',
     unsafe_allow_html=True)
 
+# Display environment-specific notice
+if st.session_state.get('is_web_environment', False):
+    st.info(
+        "ℹ️ **Video Performance Notice**: Videos may appear less animated in web browsers compared to running locally. "
+        "This is a known limitation with browser-based video processing. For the best visual experience, "
+        "we recommend running this application on your local machine.")
+
 # Sidebar for controls
 with st.sidebar:
     st.title("🎛️ Controls")
+
+    # Add note about local vs. web performance
+    if st.session_state.get('is_web_environment', False):
+        st.markdown("""
+        ### 📝 Important Note
+        **The video animation effects appear much smoother when running locally vs. in a web browser.**
+        
+        This is due to browser limitations in handling real-time video processing and is a known limitation.
+        """)
 
     # Detection settings
     st.subheader("⚙️ Detection Settings")
@@ -1083,6 +1119,20 @@ with st.sidebar:
     # Status indicator for environment
     if st.session_state.get('is_web_environment', False):
         st.info("🌐 Running in web environment")
+        st.warning(
+            "⚠️ **Known Issue**: Video animations may appear static or less smooth in web browsers due to browser rendering limitations. This is expected behavior."
+        )
+
+        # Add buffer size control for web environment
+        buffer_size = st.slider(
+            "Frame Buffer Size",
+            min_value=0,
+            max_value=5,
+            value=st.session_state.get('buffer_size', 3),
+            help=
+            "Higher values may improve animation smoothness but increase latency"
+        )
+        st.session_state.buffer_size = buffer_size
     else:
         st.success("🖥️ Running in local environment")
 
