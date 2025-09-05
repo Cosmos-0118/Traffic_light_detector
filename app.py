@@ -490,7 +490,6 @@ with col1:
             # Process image
             if st.button("🚀 Detect Traffic Lights", type="primary"):
                 process_image(image, uploaded_image.name)
-                st.rerun()
 
     elif input_method == "📹 Upload Video File":
         uploaded_file = st.file_uploader(
@@ -512,7 +511,6 @@ with col1:
             # Process video
             if st.button("🚀 Start Detection", type="primary"):
                 process_video(video_path)
-                st.rerun()
 
     elif input_method == "📷 Use Webcam":
         st.info(
@@ -643,7 +641,6 @@ with col1:
                         if st.button("🚀 Detect Traffic Lights in Sample",
                                      type="primary"):
                             process_image(image, os.path.basename(image_path))
-                            st.rerun()
                     with col_btn2:
                         if st.button("❌ Clear Selection"):
                             st.session_state.selected_sample = None
