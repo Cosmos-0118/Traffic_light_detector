@@ -6,13 +6,40 @@ A web interface for the real-time traffic light detection system.
 Users can upload videos or use webcam to detect traffic lights.
 """
 
+# Robust OpenCV import with fallback - MUST be first
+try:
+    import cv2
+    OPENCV_AVAILABLE = True
+except ImportError as e:
+    OPENCV_AVAILABLE = False
+    cv2 = None
+
 import streamlit as st
-import cv2
 import numpy as np
 import tempfile
 import os
 from datetime import datetime
-from traffic_light_detector import AutoTrafficLightDetector
+
+# Show error if OpenCV failed to import
+if not OPENCV_AVAILABLE:
+    st.error(
+        "OpenCV import failed. Please ensure opencv-python-headless is installed."
+    )
+    st.error("Try: pip install opencv-python-headless")
+    st.stop()
+
+# Only import detector if OpenCV is available
+if OPENCV_AVAILABLE:
+    try:
+        from traffic_light_detector import AutoTrafficLightDetector
+        DETECTOR_AVAILABLE = True
+    except ImportError as e:
+        st.error(f"Traffic light detector import failed: {e}")
+        DETECTOR_AVAILABLE = False
+        AutoTrafficLightDetector = None
+else:
+    DETECTOR_AVAILABLE = False
+    AutoTrafficLightDetector = None
 
 # Page configuration
 st.set_page_config(page_title="Traffic Light Detection System",
@@ -136,7 +163,9 @@ st.markdown("""
 # Initialize the detector
 @st.cache_resource
 def get_detector():
-    return AutoTrafficLightDetector()
+    if DETECTOR_AVAILABLE and AutoTrafficLightDetector is not None:
+        return AutoTrafficLightDetector()
+    return None
 
 
 detector = get_detector()
@@ -429,6 +458,13 @@ def process_video(video_path):
     except:
         pass
 
+
+# Check if dependencies are available
+if not OPENCV_AVAILABLE or not DETECTOR_AVAILABLE or detector is None:
+    st.error(
+        "❌ Required dependencies are not available. Please check the installation."
+    )
+    st.stop()
 
 # Main header
 st.markdown('<h1 class="main-header">🚦 Traffic Light Detection System</h1>',
