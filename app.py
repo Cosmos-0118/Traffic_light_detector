@@ -706,15 +706,51 @@ def process_video(video_path):
     import time
     t0 = time.time()
 
+    # Detect if detector.process_frame supports the new keyword arg once (compat for hosted older code)
+    import inspect
+    try:
+        _sig = inspect.signature(detector.process_frame)
+        _supports_kw = 'return_detections' in _sig.parameters
+    except Exception:
+        _supports_kw = False
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         frame_index += 1
-
-        # Use combined processing returning detections from confirmed tracks only
-        annotated, confirmed = detector.process_frame(frame,
-                                                      return_detections=True)
+        try:
+            if _supports_kw:
+                # Preferred modern path
+                annotated, confirmed = detector.process_frame(
+                    frame, return_detections=True)
+            else:
+                # Legacy fallback: may return only annotated frame
+                pf_res = detector.process_frame(frame)
+                if isinstance(pf_res, tuple) and len(pf_res) == 2:
+                    annotated, confirmed = pf_res
+                else:
+                    annotated = pf_res
+                    # Separate detection call (may be heavier but ensures counts)
+                    try:
+                        confirmed = detector.detect_traffic_lights(frame)
+                    except Exception:
+                        confirmed = []
+        except TypeError:
+            # Parameter not accepted (legacy), fallback like above
+            try:
+                pf_res = detector.process_frame(frame)
+                if isinstance(pf_res, tuple) and len(pf_res) == 2:
+                    annotated, confirmed = pf_res
+                else:
+                    annotated = pf_res
+                    confirmed = detector.detect_traffic_lights(frame)
+            except Exception:
+                annotated = frame
+                confirmed = []
+        except Exception:
+            annotated = frame
+            confirmed = []
 
         # Update cumulative counts (per frame uniqueness)
         frame_colors = {d['color'] for d in confirmed}
