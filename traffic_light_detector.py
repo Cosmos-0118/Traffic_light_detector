@@ -1033,18 +1033,18 @@ class AutoTrafficLightDetector:
 
         return detections
 
-    def process_frame(self, frame):
-        """
-        Process a single frame: detect traffic lights and draw results.
-        
+    def process_frame(self, frame, return_detections: bool = False):
+        """Process a single frame and optionally return detections too.
+
         Args:
-            frame: Current video frame
-            
+            frame: Current video frame (BGR)
+            return_detections: If True returns (annotated_frame, detections)
+
         Returns:
-            annotated_frame: Frame with detection results
+            annotated_frame or (annotated_frame, detections)
         """
         if frame is None:
-            return None
+            return (None, []) if return_detections else None
 
         # Start timing for performance measurement
         start_time = cv2.getTickCount()
@@ -1113,6 +1113,12 @@ class AutoTrafficLightDetector:
         cv2.putText(annotated_frame, timestamp, (10, frame.shape[0] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
+        if return_detections:
+            return annotated_frame, [{
+                'color': t['color'],
+                'box': t['box'],
+                'confidence': t['confidence']
+            } for t in self.tracks if t.get('confirmed')]
         return annotated_frame
 
     def process_image_file(self, image_path, save_output=False):

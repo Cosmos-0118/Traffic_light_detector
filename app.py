@@ -20,6 +20,8 @@ import tempfile
 import os
 from datetime import datetime
 from pathlib import Path
+import math
+import random
 
 # Show error if OpenCV failed to import
 if not OPENCV_AVAILABLE:
@@ -221,17 +223,28 @@ detector = get_detector()
 BASE_DIR = Path(__file__).resolve().parent
 
 # Try to auto-detect project root that actually contains sample folders
-_candidate_roots = [
-    BASE_DIR,
-    BASE_DIR.parent,
-    Path.cwd(),
-]
+_candidate_roots = [BASE_DIR, BASE_DIR.parent, Path.cwd()]
+
+# Walk up a few parent levels for robustness in hosted environments
+_cur = BASE_DIR
+for _ in range(5):
+    _cur = _cur.parent
+    _candidate_roots.append(_cur)
+
+# Optional env var override
+env_root = os.getenv('TRAFFIC_LIGHT_DET_ROOT')
+if env_root:
+    _candidate_roots.insert(0, Path(env_root))
+
 PROJECT_ROOT = BASE_DIR
 for _cand in _candidate_roots:
-    if (_cand / 'sample_videos').is_dir() and (_cand /
-                                               'sample_images').is_dir():
-        PROJECT_ROOT = _cand
-        break
+    try:
+        if (_cand / 'sample_videos').is_dir() and (_cand /
+                                                   'sample_images').is_dir():
+            PROJECT_ROOT = _cand
+            break
+    except Exception:
+        continue
 
 
 def resolve_resource(rel_path: str):
@@ -266,6 +279,191 @@ def debug_missing_resource_message(rel_path: str):
         f"Resource '{rel_path}' not found. Tried:\n{attempted_str}\n"
         f"Current working dir: {Path.cwd()} | Script dir: {BASE_DIR} | Project root guess: {PROJECT_ROOT}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Synthetic sample video generation (replaces static bundled video assets)
+# ---------------------------------------------------------------------------
+def _apply_effect(img, i, total, effect):
+    """Return a frame with a simple visual effect.
+
+    Supported effects: zoom, pulse, panx, flicker, jitter, crop_jitter, steady
+    """
+    h, w = img.shape[:2]
+    t = i / max(1, total - 1)
+    frame = img.copy()
+
+    try:
+        if effect == 'zoom':
+            scale = 1.0 + 0.10 * math.sin(2 * math.pi * t)
+            nh, nw = int(h * scale), int(w * scale)
+            resized = cv2.resize(frame, (nw, nh))
+            y0 = max(0, (nh - h) // 2)
+            x0 = max(0, (nw - w) // 2)
+            frame = resized[y0:y0 + h, x0:x0 + w]
+            if frame.shape[:2] != (h, w):
+                frame = cv2.resize(frame, (w, h))
+        elif effect == 'pulse':
+            # Deeper dimming for robustness: brightness cycles between ~45% and 100%
+            # Old range was ~75%-110% which rarely darkened the light; this new range
+            # helps test low-intensity detection without oversaturating.
+            alpha = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(2 * math.pi * t)
+                                   )  # [0.45, 1.0]
+            # Operate in HSV for more natural dimming (reduce V channel only)
+            try:
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                h_ch, s_ch, v_ch = cv2.split(hsv)
+                v_ch = np.clip(v_ch.astype(np.float32) * alpha, 0,
+                               255).astype(np.uint8)
+                hsv = cv2.merge([h_ch, s_ch, v_ch])
+                frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+            except Exception:
+                # Fallback to simple global scaling if HSV conversion fails
+                frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=0)
+        elif effect == 'panx':
+            shift = int(18 * math.sin(2 * math.pi * t))
+            M = np.float32([[1, 0, shift], [0, 1, 0]])
+            frame = cv2.warpAffine(frame,
+                                   M, (w, h),
+                                   borderMode=cv2.BORDER_REFLECT)
+        elif effect == 'flicker':
+            alpha = 0.65 + 0.7 * random.random()
+            beta = random.randint(-20, 20)
+            noisy = frame.astype(np.float32)
+            noise = np.random.normal(0, 10, size=frame.shape)
+            noisy = np.clip(noisy + noise, 0, 255)
+            frame = cv2.convertScaleAbs(noisy, alpha=alpha, beta=beta)
+        elif effect == 'jitter':
+            sx = random.randint(-6, 6)
+            sy = random.randint(-6, 6)
+            M = np.float32([[1, 0, sx], [0, 1, sy]])
+            frame = cv2.warpAffine(frame,
+                                   M, (w, h),
+                                   borderMode=cv2.BORDER_REFLECT)
+        elif effect == 'crop_jitter':
+            crop_scale = 0.88 + 0.1 * random.random()
+            ch, cw = int(h * crop_scale), int(w * crop_scale)
+            y0 = random.randint(0, max(0, h - ch))
+            x0 = random.randint(0, max(0, w - cw))
+            cropped = frame[y0:y0 + ch, x0:x0 + cw]
+            frame = cv2.resize(cropped, (w, h))
+        # steady: leave unchanged
+    except Exception:
+        pass
+    return frame
+
+
+def _write_video(output_path, frames, fps=18):
+    if not frames:
+        return False
+    h, w = frames[0].shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    vw = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+    for f in frames:
+        if f.shape[:2] != (h, w):
+            f = cv2.resize(f, (w, h))
+        vw.write(f)
+    vw.release()
+    return True
+
+
+def generate_sample_videos(force=False, fps=18, seconds=5):
+    """Create lightweight synthetic videos derived from sample images.
+
+    Duration default increased to 5s for better testing. Existing videos
+    shorter than the new target auto-regenerate even if force=False.
+    """
+    out_dir = PROJECT_ROOT / 'sample_videos'
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    specs = {
+        'sample_red_light.mp4':
+        (['sample_images/sample_red_light.jpg'], 'zoom'),
+        'sample_yellow_light.mp4':
+        (['sample_images/sample_yellow_light.jpg'], 'pulse'),
+        'sample_green_light.mp4': (['sample_images/sample_green_light.jpg'],
+                                   'panx'),
+        'sample_all_lights.mp4': ([
+            'sample_images/sample_red_light.jpg',
+            'sample_images/sample_yellow_light.jpg',
+            'sample_images/sample_green_light.jpg'
+        ], 'steady'),
+        'sample_multiple_lights.mp4':
+        (['sample_images/sample_multiple_lights.jpg'], 'jitter'),
+        'sample_night_scene.mp4': (['sample_images/sample_night_scene.jpg'],
+                                   'flicker'),
+        'sample_challenging_scene.mp4':
+        (['sample_images/sample_challenging_scene.jpg'], 'crop_jitter'),
+        'sample_red_bottom.mp4': (['sample_images/sample_red_bottom.jpg'],
+                                  'pulse'),
+        'sample_red_left.mp4': (['sample_images/sample_red_left.jpg'], 'zoom'),
+        'sample_red_right.mp4': (['sample_images/sample_red_right.jpg'],
+                                 'zoom'),
+        'sample_red_top.mp4': (['sample_images/sample_red_top.jpg'], 'pulse'),
+    }
+
+    total_frames = int(fps * seconds)
+    created, skipped = [], []
+
+    for filename, (image_list, effect) in specs.items():
+        out_path = out_dir / filename
+        regenerate = False
+        if out_path.exists():
+            if force:
+                regenerate = True
+            else:
+                # Inspect existing video length; regenerate if too short
+                cap = cv2.VideoCapture(str(out_path))
+                if cap.isOpened():
+                    existing_frames = int(
+                        cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                    existing_fps = cap.get(cv2.CAP_PROP_FPS) or fps
+                    cap.release()
+                    target_frames = int(fps * seconds *
+                                        0.9)  # allow some slack
+                    if existing_frames < target_frames:
+                        regenerate = True
+                else:
+                    regenerate = True
+        else:
+            regenerate = True
+
+        if not regenerate:
+            skipped.append(filename)
+            continue
+        # Remove old file if present
+        try:
+            if out_path.exists():
+                out_path.unlink()
+        except Exception:
+            pass
+        frames = []
+        imgs = []
+        for rel in image_list:
+            p = resolve_resource(rel)
+            if p is None:
+                continue
+            img = cv2.imread(p)
+            if img is not None:
+                imgs.append(img)
+        if not imgs:
+            continue
+        for i in range(total_frames):
+            if effect == 'steady' and len(imgs) > 1:
+                idx = int((i / total_frames) * len(imgs)) % len(imgs)
+                frame = imgs[idx].copy()
+            else:
+                base = imgs[i % len(imgs)].copy()
+                frame = _apply_effect(base, i, total_frames, effect)
+            frames.append(frame)
+        if _write_video(str(out_path), frames, fps=fps):
+            created.append(filename)
+    return created, skipped
+
+
+@st.cache_resource(show_spinner=False)
+def ensure_sample_videos():
+    return generate_sample_videos(force=False)
 
 
 def create_debug_masks(image, detector):
@@ -483,106 +681,90 @@ def process_image(image, filename):
 
 
 def process_video(video_path):
-    """Process uploaded video and display results"""
-    # Initialize video capture
+    """Process uploaded or sample video efficiently without duplicate detection calls."""
     cap = cv2.VideoCapture(video_path)
-
     if not cap.isOpened():
         st.error("❌ Could not open video file. Please check the file format.")
         return
 
-    # Get video properties
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     duration = total_frames / fps if fps > 0 else 0
-
     st.info(
         f"📹 Video Info: {total_frames} frames, {fps:.1f} FPS, {duration:.1f}s duration"
     )
 
-    # Create placeholders for video display
     video_placeholder = st.empty()
-    progress_bar = st.progress(0)
+    progress_bar = st.progress(0.0)
     status_text = st.empty()
 
-    # Detection counters
-    detection_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
-    frame_count = 0
+    # Counters (count unique confirmed tracks per frame rather than raw detections to avoid overcount)
+    cumulative_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
+    frame_index = 0
 
-    # Process video frames
+    # Warmup: run one detection to build dynamic params cache faster (first frame often slower)
+    import time
+    t0 = time.time()
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+        frame_index += 1
 
-        # Process frame
-        result_frame = detector.process_frame(frame)
+        # Use combined processing returning detections from confirmed tracks only
+        annotated, confirmed = detector.process_frame(frame,
+                                                      return_detections=True)
 
-        # Count detections in current frame
-        frame_detections = detector.detect_traffic_lights(frame)
-        for detection in frame_detections:
-            color = detection.get('color', 'Unknown')
-            if color in detection_counts:
-                detection_counts[color] += 1
+        # Update cumulative counts (per frame uniqueness)
+        frame_colors = {d['color'] for d in confirmed}
+        for c in frame_colors:
+            if c in cumulative_counts:
+                cumulative_counts[c] += 1
 
-        # Convert BGR to RGB for display
-        result_rgb = cv2.cvtColor(result_frame, cv2.COLOR_BGR2RGB)
-
-        # Display frame with or without debug masks
+        # Prepare display image
+        frame_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
         if show_debug:
             debug_image = create_debug_masks(frame, detector)
             if debug_image is not None:
                 debug_rgb = cv2.cvtColor(debug_image, cv2.COLOR_BGR2RGB)
-                # Create side-by-side comparison
-                combined = np.hstack([result_rgb, debug_rgb])
-                video_placeholder.image(combined,
-                                        channels="RGB",
-                                        use_container_width=True)
-            else:
-                video_placeholder.image(result_rgb,
-                                        channels="RGB",
-                                        use_container_width=True)
-        else:
-            video_placeholder.image(result_rgb,
-                                    channels="RGB",
-                                    use_container_width=True)
+                frame_rgb = np.hstack([frame_rgb, debug_rgb])
 
-        # Update progress
-        frame_count += 1
-        progress = frame_count / total_frames
-        progress_bar.progress(progress)
+        video_placeholder.image(frame_rgb,
+                                channels="RGB",
+                                use_container_width=True)
 
-        # Update status
+        # Progress & status
+        if total_frames > 0:
+            progress_bar.progress(min(1.0, frame_index / total_frames))
         status_text.text(
-            f"Processing frame {frame_count}/{total_frames} | Red: {detection_counts['Red']} | Yellow: {detection_counts['Yellow']} | Green: {detection_counts['Green']}"
+            f"Frame {frame_index}/{total_frames if total_frames else '?'} | Red: {cumulative_counts['Red']} | Yellow: {cumulative_counts['Yellow']} | Green: {cumulative_counts['Green']}"
         )
 
-        # Add small delay to make it viewable
-        import time
-        time.sleep(0.1)
+        # Adaptive small sleep to avoid overwhelming Streamlit UI; faster after first 10 frames
+        if frame_index < 10:
+            time.sleep(0.03)
+        else:
+            time.sleep(0.01)
 
-    # Cleanup
     cap.release()
-
-    # Update session state for sidebar stats
-    st.session_state.detection_counts = detection_counts.copy()
-
-    # Final results
+    st.session_state.detection_counts = cumulative_counts.copy()
     st.success("✅ Video processing complete!")
 
-    # Display final statistics
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("🔴 Red Lights", detection_counts['Red'])
+        st.metric("🔴 Red Lights", cumulative_counts['Red'])
     with col2:
-        st.metric("🟡 Yellow Lights", detection_counts['Yellow'])
+        st.metric("🟡 Yellow Lights", cumulative_counts['Yellow'])
     with col3:
-        st.metric("🟢 Green Lights", detection_counts['Green'])
+        st.metric("🟢 Green Lights", cumulative_counts['Green'])
 
-    # Clean up temporary file
+    # Best-effort cleanup
     try:
-        os.unlink(video_path)
-    except:
+        if os.path.exists(video_path) and video_path.startswith(
+                tempfile.gettempdir()):
+            os.unlink(video_path)
+    except Exception:
         pass
 
 
@@ -794,22 +976,55 @@ with col1:
             st.markdown("### 🎬 Sample Video Detection")
             st.info("Select a sample video to test the detection system.")
 
+            # Generate synthetic sample videos if missing
+            with st.spinner("Preparing synthetic sample videos..."):
+                created, skipped = ensure_sample_videos()
+            if created:
+                st.success(f"Generated: {', '.join(created)}")
+            # (Skip message suppressed to reduce noise)
+
+            # Regenerate control
+            regen_col1, regen_col2 = st.columns([2, 1])
+            with regen_col1:
+                st.caption(
+                    "Need fresh variations? Regenerate with new random jitters."
+                )
+            with regen_col2:
+                if st.button(
+                        "♻️ Regenerate",
+                        help=
+                        "Force re-create all synthetic sample videos with new random effects variations."
+                ):
+                    # Clear cache first
+                    try:
+                        ensure_sample_videos.clear()
+                    except Exception:
+                        pass
+                    with st.spinner("Regenerating videos..."):
+                        new_created, _ = generate_sample_videos(force=True)
+                    if new_created:
+                        st.success(f"Recreated: {', '.join(new_created)}")
+                    else:
+                        st.warning("No videos regenerated.")
+                    st.rerun()
+
             # Sample videos with better organization
             sample_videos = {
-                "🔴 Red Light Video": "sample_videos/sample_red_light.mp4",
-                "🟡 Yellow Light Video":
+                "🔴 Red Light (Zoom)": "sample_videos/sample_red_light.mp4",
+                "🟡 Yellow Light (Pulse)":
                 "sample_videos/sample_yellow_light.mp4",
-                "🟢 Green Light Video": "sample_videos/sample_green_light.mp4",
-                "🚦 All Lights Video": "sample_videos/sample_all_lights.mp4",
-                "🏙️ Multiple Lights Video":
+                "🟢 Green Light (Pan)": "sample_videos/sample_green_light.mp4",
+                "🚦 All Lights (Cycle)": "sample_videos/sample_all_lights.mp4",
+                "🏙️ Multiple Lights (Jitter)":
                 "sample_videos/sample_multiple_lights.mp4",
-                "🌙 Night Scene Video": "sample_videos/sample_night_scene.mp4",
-                "🎯 Challenging Scene Video":
+                "🌙 Night Scene (Flicker)":
+                "sample_videos/sample_night_scene.mp4",
+                "🎯 Challenging Scene (Crop Jitter)":
                 "sample_videos/sample_challenging_scene.mp4",
-                "🔴 Red Bottom Video": "sample_videos/sample_red_bottom.mp4",
-                "🔴 Red Left Video": "sample_videos/sample_red_left.mp4",
-                "🔴 Red Right Video": "sample_videos/sample_red_right.mp4",
-                "🔴 Red Top Video": "sample_videos/sample_red_top.mp4"
+                "🔴 Red Bottom (Pulse)": "sample_videos/sample_red_bottom.mp4",
+                "🔴 Red Left (Zoom)": "sample_videos/sample_red_left.mp4",
+                "🔴 Red Right (Zoom)": "sample_videos/sample_red_right.mp4",
+                "🔴 Red Top (Pulse)": "sample_videos/sample_red_top.mp4"
             }
 
             # Initialize selected sample video in session state
