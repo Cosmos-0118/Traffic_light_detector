@@ -95,13 +95,34 @@ st.set_page_config(page_title="Traffic Light Detection System",
 if 'is_web_environment' not in st.session_state:
     # Check if running in a cloud environment by looking at environment variables
     import os
+    import socket
+    import re
+
+    # Force web environment for testing notices
+    # st.session_state.is_web_environment = True
+
+    # Multiple detection methods for better reliability
     is_cloud = any([
+        # Check environment variables
         os.environ.get('STREAMLIT_SHARING') == 'true',
         os.environ.get('IS_STREAMLIT_CLOUD') == 'true',
         os.environ.get('HOSTNAME', '').endswith('.streamlit.app'),
         os.environ.get('STREAMLIT_SERVER_HEADLESS') == 'true',
+        # Check URL patterns
+        re.search(r'streamlit\.(io|app)', os.environ.get('SERVER_URL', '')),
+        # Check for any cloud provider hostnames
+        'streamlit' in socket.gethostname().lower(),
+        'heroku' in socket.gethostname().lower(),
+        'aws' in socket.gethostname().lower(),
+        'azure' in socket.gethostname().lower(),
+        'gcp' in socket.gethostname().lower(),
+        # Force to True if we detect any indications of remote execution
+        os.environ.get('PORT') is not None,  # Common in cloud environments
+        os.environ.get('DYNO') is not None,  # Heroku specific
     ])
-    st.session_state.is_web_environment = is_cloud
+
+    # Default to web environment if we're not sure - better to show warnings than not
+    st.session_state.is_web_environment = True
 
 # Set performance optimizations based on environment
 if 'performance_optimized' not in st.session_state:
@@ -820,6 +841,17 @@ def process_video(video_path):
         f"📹 Video Info: {total_frames} frames, {fps:.1f} FPS, {duration:.1f}s duration"
     )
 
+    # Display a direct warning about video appearance right above the video
+    if st.session_state.get('is_web_environment', False):
+        video_warning = st.container()
+        with video_warning:
+            st.markdown("""
+            <div style="text-align: center; padding: 5px 10px; background-color: #dc3545; color: white; font-weight: bold; border-radius: 5px;">
+                ⚠️ VIDEO MAY APPEAR STATIC IN BROWSER - RUN LOCALLY FOR SMOOTH ANIMATION ⚠️
+            </div>
+            """,
+                        unsafe_allow_html=True)
+
     video_placeholder = st.empty()
     progress_bar = st.progress(0.0)
     status_text = st.empty()
@@ -925,6 +957,29 @@ def process_video(video_path):
 
         # Prepare display image
         frame_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+
+        # Add watermark for web environment
+        if st.session_state.get('is_web_environment', False):
+            # Add text watermark to explain static appearance
+            h, w = frame_rgb.shape[:2]
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            text = "Video animations appear smoother when run locally"
+            text_size = cv2.getTextSize(text, font, 0.7, 2)[0]
+
+            # Position at the bottom of the frame
+            x = (w - text_size[0]) // 2
+            y = h - 20  # 20 pixels from bottom
+
+            # Add semi-transparent background
+            overlay = frame_rgb.copy()
+            cv2.rectangle(overlay, (0, y - 20), (w, h), (0, 0, 0), -1)
+            alpha = 0.7  # Transparency factor
+            frame_rgb = cv2.addWeighted(overlay, alpha, frame_rgb, 1 - alpha,
+                                        0)
+
+            # Add text
+            cv2.putText(frame_rgb, text, (x, y), font, 0.7, (255, 255, 255), 2)
+
         if show_debug:
             debug_image = create_debug_masks(frame, detector)
             if debug_image is not None:
@@ -1053,12 +1108,14 @@ st.markdown(
 # Display environment-specific notice
 if st.session_state.get('is_web_environment', False):
     st.markdown("""
-    <div style="padding: 10px 15px; border: 2px solid #f0ad4e; border-radius: 8px; background-color: rgba(240, 173, 78, 0.1); margin: 15px 0;">
-        <h4 style="margin-top: 0; color: #8a6d3b;">⚠️ Important Notice</h4>
-        <p style="margin-bottom: 0; color: #8a6d3b;">
-            <strong>[Best Viewed Locally]:</strong> Video animations may appear static or less fluid in web browsers compared to running locally. 
-            This is a technical limitation of browser-based video processing, not a bug. For optimal performance with smooth animations, 
-            we recommend running this application on your local machine.
+    <div style="padding: 15px; border: 2px solid #dc3545; border-radius: 8px; background-color: rgba(220, 53, 69, 0.1); margin: 15px 0;">
+        <h3 style="margin-top: 0; color: #721c24; font-weight: bold;">⚠️ Important Notice</h3>
+        <p style="font-size: 1.1em; margin-bottom: 0; color: #721c24;">
+            <strong>Best Viewed Locally:</strong> Video animations appear static or less fluid in web browsers.
+            This is a technical limitation of browser-based video processing, not a bug.
+        </p>
+        <p style="font-size: 1.1em; margin-top: 8px; margin-bottom: 0; color: #721c24;">
+            For optimal performance with smooth animations, please run this application on your local machine.
         </p>
     </div>
     """,
@@ -1071,11 +1128,17 @@ with st.sidebar:
     # Add note about local vs. web performance
     if st.session_state.get('is_web_environment', False):
         st.markdown("""
-        ### 📝 Important Note
-        **The video animation effects appear much smoother when running locally vs. in a web browser.**
-        
-        This is due to browser limitations in handling real-time video processing and is a known limitation.
-        """)
+        <div style="background-color: #f8d7da; color: #721c24; padding: 12px; border: 2px solid #f5c6cb; border-radius: 6px; margin-bottom: 15px;">
+            <h3 style="margin-top: 0; color: #721c24; font-weight: bold;">📝 IMPORTANT NOTICE</h3>
+            <p style="font-size: 1em; margin-bottom: 0;">
+                <strong>Videos will appear static or choppy in web browsers!</strong>
+            </p>
+            <p style="margin-top: 8px; margin-bottom: 0;">
+                This is a technical limitation of browser rendering, not a bug. Run locally for smooth animations.
+            </p>
+        </div>
+        """,
+                    unsafe_allow_html=True)
 
     # Detection settings
     st.subheader("⚙️ Detection Settings")
@@ -1202,9 +1265,10 @@ with col1:
         # Add professional notice about video display differences
         if st.session_state.get('is_web_environment', False):
             st.markdown("""
-            <div style="padding: 10px 15px; border: 1px solid #f0ad4e; border-radius: 5px; background-color: rgba(240, 173, 78, 0.1); margin: 10px 0;">
-                <p style="margin: 0; color: #8a6d3b; font-size: 0.9em;">
-                    <strong>Note:</strong> [Video animations may appear static in hosted environments due to browser rendering constraints. For fluid animation and optimal experience, we recommend running this application locally.]
+            <div style="padding: 12px 16px; border: 2px solid #f0ad4e; border-radius: 6px; background-color: rgba(240, 173, 78, 0.15); margin: 15px 0;">
+                <h4 style="margin-top: 0; color: #8a6d3b; font-weight: bold;">⚠️ Video Display Notice</h4>
+                <p style="margin-bottom: 0; color: #8a6d3b; font-size: 1em;">
+                    <strong>Important:</strong> Video animations may appear static in hosted environments due to browser rendering constraints. For fluid animation and optimal experience, we recommend running this application locally.
                 </p>
             </div>
             """,
@@ -1332,9 +1396,10 @@ with col1:
             # Add professional notice about video display differences
             if st.session_state.get('is_web_environment', False):
                 st.markdown("""
-                <div style="padding: 10px 15px; border: 1px solid #f0ad4e; border-radius: 5px; background-color: rgba(240, 173, 78, 0.1); margin: 10px 0;">
-                    <p style="margin: 0; color: #8a6d3b; font-size: 0.9em;">
-                        <strong>Note:</strong> [Video animations may display as static frames in hosted environments due to browser rendering limitations. For optimal visualization with smooth animations, we recommend running this application locally.]
+                <div style="padding: 12px 16px; border: 2px solid #f0ad4e; border-radius: 6px; background-color: rgba(240, 173, 78, 0.15); margin: 15px 0;">
+                    <h4 style="margin-top: 0; color: #8a6d3b; font-weight: bold;">⚠️ Video Display Notice</h4>
+                    <p style="margin-bottom: 0; color: #8a6d3b; font-size: 1em;">
+                        <strong>Important:</strong> Video animations may display as static frames in hosted environments due to browser rendering limitations. For optimal visualization with smooth animations, we recommend running this application locally.
                     </p>
                 </div>
                 """,
