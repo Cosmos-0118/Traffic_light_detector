@@ -487,18 +487,23 @@ class AutoTrafficLightDetector:
         if len(detections) == 0:
             detections = self._detect_bright_regions(frame, dynamic_params)
 
-        # Non-maximum suppression (IoU)
+        # Non-maximum suppression (IoU) - more aggressive for better deduplication
         detections = self._remove_overlapping_boxes(detections,
-                                                    overlap_threshold=0.2)
+                                                    overlap_threshold=0.15)
+        # Remove close detections (position-based deduplication)
+        detections = self._remove_close_detections(detections,
+                                                   min_distance_threshold=25)
         # Additional false positive filtering
         detections = self._filter_false_positives(detections, frame)
-        # Final pass: if overlapping boxes still have different colors, keep the one with higher color score
+
+        # Enhanced final pass: remove overlapping detections regardless of color
         final = []
         for det in detections:
             keep = True
             x, y, w, h = det['box']
             my_score = int(
                 np.sum(color_masks_cache[det['color']][y:y + h, x:x + w]))
+
             for kept in list(final):
                 kx, ky, kw, kh = kept['box']
                 # IoU calculation
@@ -509,17 +514,30 @@ class AutoTrafficLightDetector:
                     continue
                 union = w * h + kw * kh - inter
                 iou = inter / union if union > 0 else 0
-                if iou > 0.4 and det['color'] != kept['color']:
+
+                # Check for overlapping detections (lower threshold for better deduplication)
+                if iou > 0.25:  # Lower threshold to catch more duplicates
                     kept_score = int(
                         np.sum(color_masks_cache[kept['color']][ky:ky + kh,
                                                                 kx:kx + kw]))
-                    if my_score > kept_score or (my_score == kept_score
-                                                 and det['confidence']
-                                                 > kept['confidence']):
-                        final.remove(kept)
+
+                    # If same color, keep the one with higher confidence
+                    if det['color'] == kept['color']:
+                        if det['confidence'] > kept['confidence']:
+                            final.remove(kept)
+                        else:
+                            keep = False
+                            break
+                    # If different colors, keep the one with higher color score
                     else:
-                        keep = False
-                        break
+                        if my_score > kept_score or (my_score == kept_score
+                                                     and det['confidence']
+                                                     > kept['confidence']):
+                            final.remove(kept)
+                        else:
+                            keep = False
+                            break
+
             if keep:
                 final.append(det)
         detections = final
@@ -581,6 +599,55 @@ class AutoTrafficLightDetector:
                     break
 
             # Add to filtered list if it doesn't overlap significantly with any kept detection
+            if should_keep:
+                filtered_detections.append(detection)
+
+        return filtered_detections
+
+    def _remove_close_detections(self, detections, min_distance_threshold=20):
+        """
+        Remove detections that are too close to each other, keeping the one with higher confidence.
+        This catches cases where IoU might be low but detections are essentially the same.
+        
+        Args:
+            detections: List of detection dictionaries
+            min_distance_threshold: Minimum distance between detection centers (in pixels)
+            
+        Returns:
+            filtered_detections: List of detections with close duplicates removed
+        """
+        if not detections:
+            return []
+
+        # Sort by confidence
+        detections = sorted(detections,
+                            key=lambda x: x['confidence'],
+                            reverse=True)
+
+        filtered_detections = []
+
+        for detection in detections:
+            x, y, w, h = detection['box']
+            center_x = x + w / 2
+            center_y = y + h / 2
+
+            should_keep = True
+
+            for kept in filtered_detections:
+                kx, ky, kw, kh = kept['box']
+                kept_center_x = kx + kw / 2
+                kept_center_y = ky + kh / 2
+
+                # Calculate distance between centers
+                distance = ((center_x - kept_center_x)**2 +
+                            (center_y - kept_center_y)**2)**0.5
+
+                # If too close and same color, remove the one with lower confidence
+                if distance < min_distance_threshold and detection[
+                        'color'] == kept['color']:
+                    should_keep = False
+                    break
+
             if should_keep:
                 filtered_detections.append(detection)
 

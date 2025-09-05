@@ -1,95 +1,234 @@
-# Traffic Light Detection (OpenCV + HSV)
+# 🚦 Traffic Light Detection System
 
-Real-time detection of traffic lights (Red/Yellow/Green) from webcam or a video file using OpenCV. The detector applies HSV color segmentation with adaptive preprocessing and draws labeled boxes with confidence scores. A minimal UI is included to select sources and optionally save processed output.
+A comprehensive real-time traffic light detection system that uses OpenCV and HSV color segmentation to detect Red, Yellow, and Green traffic lights from webcam feeds, video files, or static images. The system features both a command-line interface and a modern web-based Streamlit interface.
 
-## Features
+## ✨ Features
 
-- **Automatic color detection**: Robust HSV ranges for Red, Yellow, Green
-- **Adaptive preprocessing**: Gray-world white balance, auto gamma, CLAHE
-- **Noise handling**: Morphology, contour filters, brightness/saturation gates
-- **Tracking and smoothing**: Simple IoU-based track management with lock-on
-- **Heuristics**: Basic separation of traffic lights vs vehicle lights
-- **UI launcher**: Simple OpenCV-based menu for webcam/video selection
-- **Optional recording**: Save annotated output to MP4 with timestamp
+### Core Detection Capabilities
 
-## Quick Start
+- **Multi-color detection**: Robust HSV-based detection for Red, Yellow, and Green traffic lights
+- **Adaptive preprocessing**: Gray-world white balance, auto gamma correction, and CLAHE enhancement
+- **Advanced filtering**: Morphology operations, contour filtering, and brightness/saturation gates
+- **Smart tracking**: IoU-based track management with confidence smoothing and lock-on detection
+- **False positive reduction**: Heuristics to distinguish traffic lights from vehicle lights
+- **Dynamic scaling**: Automatically adjusts parameters based on input resolution
 
-### 1) Run via the UI (recommended)
+### User Interfaces
+
+- **🌐 Web Interface**: Modern Streamlit-based web app with real-time processing
+- **🖥️ Desktop UI**: OpenCV-based GUI for local desktop usage
+- **⌨️ Command Line**: Direct CLI access for automation and scripting
+
+### Input Support
+
+- **📷 Webcam**: Real-time detection from camera feeds
+- **📹 Video Files**: Process MP4, AVI, MOV, MKV, and other video formats
+- **🖼️ Images**: Single image processing with JPG, PNG, BMP, TIFF support
+- **📁 Sample Images**: Pre-loaded test images for demonstration
+
+## 🚀 Quick Start
+
+### Option 1: Web Interface (Recommended)
+
+Launch the modern Streamlit web interface:
+
+```bash
+./run_streamlit.sh
+```
+
+Then open your browser to `http://localhost:8501` and enjoy the interactive interface!
+
+### Option 2: Desktop UI
+
+Run the OpenCV-based desktop interface:
 
 ```bash
 ./run_detector.sh
 ```
 
-The script will create a virtual environment (../.venv), install dependencies from `requirements.txt`, and launch the UI. In the UI:
+### Option 3: Command Line
 
-- Press `1` to use a webcam (choose numeric ID, usually `0`)
-- Press `2` to provide a video file path
-- Choose whether to save the processed output
-- Press `q` in the video window to quit; press `d` to toggle debug masks
-
-### 2) Run directly from the CLI
+For direct CLI usage:
 
 ```bash
+# Webcam detection
 python traffic_light_detector.py --source 0 --output
-```
 
-- **--source / -s**: Camera index like `0` or a video file path
-- **--output / -o**: When present, saves the processed video to an MP4 file
-
-Example with a file:
-
-```bash
+# Video file processing
 python traffic_light_detector.py -s "/path/to/video.mp4" -o
+
+# Image processing
+python traffic_light_detector.py -s "/path/to/image.jpg" -i -o
 ```
 
-## Installation
+## 📦 Installation
 
-If you prefer manual setup:
+### Automated Setup (Recommended)
+
+The provided shell scripts handle everything automatically:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+# For web interface
+./run_streamlit.sh
+
+# For desktop interface
+./run_detector.sh
+```
+
+### Manual Setup
+
+If you prefer manual installation:
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -U pip
 pip install -r requirements.txt
 ```
 
-Dependencies (see `requirements.txt`):
+### Dependencies
 
-- opencv-contrib-python (≥ 4.5.0)
-- numpy (≥ 1.20.0)
+- **opencv-python-headless** (≥ 4.8.0): Computer vision processing
+- **numpy** (≥ 1.20.0): Numerical computations
+- **streamlit** (≥ 1.28.0): Web interface framework
+- **Pillow** (≥ 8.0.0): Image processing support
 
-## Controls & Output
+## 🎮 Usage Guide
 
-- **Keys**: `q` quits, `d` toggles color mask debug panel
-- **Boxes/labels**: Color name, type guess, track id, and confidence
-- **Saved video**: If enabled, file name like `auto_traffic_light_detection_YYYYMMDD_HHMMSS.mp4`
+### Web Interface Controls
 
-## Tips & Troubleshooting
+- **Input Methods**: Upload images/videos, use webcam, or try sample images
+- **Detection Settings**: Adjust confidence threshold and debug visualization
+- **Real-time Stats**: View detection counts and performance metrics
+- **Debug Mode**: Toggle color mask visualization for troubleshooting
 
-- **No camera feed / black window**: Check the `--source` index; try `0` or another number. Ensure another app isn’t using the camera.
-- **Could not open video source**: The path may be wrong or unsupported. Try absolute paths and common formats (MP4, AVI, MOV, MKV).
-- **Low detections**: Try brighter footage, point at larger signals, or press `d` to view masks and verify colors are captured.
-- **Performance**: Reduce input resolution or close other apps. CPU-only processing; no GPU is required.
+### Desktop Interface Controls
 
-## Project Structure
+- **Menu Navigation**: Use number keys (1-4) to select options
+- **Video Controls**: Press `q` to quit, `d` to toggle debug masks
+- **Output Options**: Choose whether to save processed videos/images
 
-- `traffic_light_detector.py`: Core detector and CLI
-- `simple_ui.py`: OpenCV-based menu to pick source and save option
-- `run_detector.sh`: Helper script to set up venv, install deps, and launch UI
-- `requirements.txt`: Minimal dependencies
+### Command Line Options
 
-## How it works (high level)
+```bash
+python traffic_light_detector.py [OPTIONS]
 
-1. Preprocess each frame: white-balance, gamma correction, blur, HSV+CLAHE
-2. Build color masks per class and clean with morphology/median filtering
-3. Find candidate contours and filter by size, aspect ratio, circularity, and brightness
-4. Score detections (geometry, purity, brightness) and apply NMS
-5. Track across frames, smooth boxes/confidence, and label majority color
+Options:
+  -s, --source SOURCE    Camera index (0), video file path, or image file path
+  -o, --output          Save processed video/image to file
+  -i, --image           Process as image file instead of video/camera
+  -h, --help            Show help message
+```
 
-## License
+## 📁 Project Structure
 
-MIT (or project’s original license). If you use this work, consider crediting the repository and authors.
+```
+Traffic-Lights-Tracking-and-Color-Detection-OpenCV/
+├── app.py                          # Streamlit web application
+├── traffic_light_detector.py       # Core detection engine
+├── simple_ui.py                    # OpenCV desktop interface
+├── requirements.txt                # Python dependencies
+├── packages.txt                    # System packages (Linux)
+├── run_streamlit.sh               # Web app launcher script
+├── run_detector.sh                # Desktop app launcher script
+├── sample_images/                 # Test images
+│   ├── sample_red_light.jpg
+│   ├── sample_yellow_light.jpg
+│   ├── sample_green_light.jpg
+│   ├── sample_all_lights.jpg
+│   ├── sample_multiple_lights.jpg
+│   ├── sample_night_scene.jpg
+│   └── sample_challenging_scene.jpg
+└── venv/                          # Virtual environment (created automatically)
+```
 
-## Acknowledgements
+## 🔧 Technical Details
 
-Built with OpenCV and NumPy. Thanks to the open-source community for tools and prior art on HSV-based traffic light detection.
+### Detection Algorithm
+
+1. **Preprocessing**: White-balance correction, gamma adjustment, Gaussian blur
+2. **Color Segmentation**: HSV-based masking for Red, Yellow, and Green ranges
+3. **Morphology**: Closing and opening operations to clean up masks
+4. **Contour Analysis**: Size, aspect ratio, circularity, and brightness filtering
+5. **Confidence Scoring**: Geometry, color purity, and brightness-based scoring
+6. **Tracking**: IoU-based association with temporal smoothing
+7. **Classification**: Traffic light vs vehicle light heuristics
+
+### Performance Features
+
+- **Dynamic Scaling**: Parameters adjust automatically based on input resolution
+- **Multi-threading**: Efficient processing for real-time performance
+- **Memory Optimization**: Minimal memory footprint for long-running sessions
+- **Error Handling**: Robust error recovery and user feedback
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+**No camera feed / black window**
+
+- Check camera permissions and availability
+- Try different camera indices (0, 1, 2, etc.)
+- Ensure no other applications are using the camera
+
+**Could not open video source**
+
+- Verify file path and format support
+- Try absolute paths instead of relative paths
+- Check file permissions and corruption
+
+**Low detection accuracy**
+
+- Ensure adequate lighting conditions
+- Try adjusting confidence threshold
+- Use debug mode to verify color mask generation
+- Point camera at larger, clearer traffic signals
+
+**Performance issues**
+
+- Close other resource-intensive applications
+- Reduce input resolution if possible
+- Consider using image processing instead of video for testing
+
+### Debug Mode
+
+Enable debug visualization to see:
+
+- Color segmentation masks
+- Contour detection results
+- Brightness and saturation filtering
+- Final detection bounding boxes
+
+## 📊 Sample Images
+
+The project includes several sample images for testing:
+
+- **🔴 Red Light**: Various red traffic light scenarios
+- **🟡 Yellow Light**: Yellow/amber light detection
+- **🟢 Green Light**: Green traffic light examples
+- **🚦 All Lights**: Multiple traffic lights in one scene
+- **🏙️ Multiple Lights**: Complex urban traffic scenarios
+- **🌙 Night Scene**: Low-light detection challenges
+- **🎯 Challenging Scene**: Difficult detection scenarios
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
+
+## 📄 License
+
+This project is open source. Please check the repository for specific licensing terms.
+
+## 🙏 Acknowledgements
+
+Built with:
+
+- **OpenCV**: Computer vision processing
+- **Streamlit**: Web interface framework
+- **NumPy**: Numerical computations
+- **Pillow**: Image processing
+
+Thanks to the open-source community for tools and prior art on HSV-based traffic light detection.

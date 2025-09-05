@@ -270,11 +270,51 @@ def process_image(image, filename):
     # Process image
     status_text.text("🔍 Processing image...")
 
-    # Use single image processing for better results
-    result_image = detector.process_single_image(image)
-
-    # Count detections - use raw detections for single image processing
+    # Detect traffic lights once
     detections = detector.detect_traffic_lights(image)
+
+    # Create annotated image manually to avoid double detection
+    result_image = image.copy()
+    for i, detection in enumerate(detections):
+        x, y, w, h = detection['box']
+        color_name = detection['color']
+        confidence = detection['confidence']
+
+        # Choose box color based on detected color
+        if color_name == 'Red':
+            box_color = (0, 0, 255)  # Red in BGR
+        elif color_name == 'Yellow':
+            box_color = (0, 255, 255)  # Yellow in BGR
+        else:  # Green
+            box_color = (0, 255, 0)  # Green in BGR
+
+        # Draw bounding box
+        cv2.rectangle(result_image, (x, y), (x + w, y + h), box_color, 3)
+
+        # Draw label background
+        cv2.rectangle(result_image, (x, y - 25), (x + w, y), box_color, -1)
+
+        # Draw label text
+        label = f"{color_name} ({confidence:.2f})"
+        cv2.putText(result_image, label, (x + 5, y - 7),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    # Add detection count info
+    red_count = sum(1 for d in detections if d['color'] == 'Red')
+    yellow_count = sum(1 for d in detections if d['color'] == 'Yellow')
+    green_count = sum(1 for d in detections if d['color'] == 'Green')
+
+    # Draw info bar
+    info_height = 40
+    overlay = result_image.copy()
+    cv2.rectangle(overlay, (0, 0), (result_image.shape[1], info_height),
+                  (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.7, result_image, 0.3, 0, result_image)
+
+    # Add detection counts
+    info_text = f"Red: {red_count} | Yellow: {yellow_count} | Green: {green_count} | Total: {len(detections)}"
+    cv2.putText(result_image, info_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (255, 255, 255), 2)
 
     # Initialize detection counts for this image
     current_detection_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
@@ -583,12 +623,15 @@ with col1:
             st.markdown('<div class="sample-button">', unsafe_allow_html=True)
             if st.button("🔴 Red Light", use_container_width=True):
                 st.session_state.selected_sample = "sample_images/sample_red_light.jpg"
+                st.session_state.auto_scroll = True
                 st.rerun()
             if st.button("🟡 Yellow Light", use_container_width=True):
                 st.session_state.selected_sample = "sample_images/sample_yellow_light.jpg"
+                st.session_state.auto_scroll = True
                 st.rerun()
             if st.button("🟢 Green Light", use_container_width=True):
                 st.session_state.selected_sample = "sample_images/sample_green_light.jpg"
+                st.session_state.auto_scroll = True
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -596,9 +639,11 @@ with col1:
             st.markdown('<div class="sample-button">', unsafe_allow_html=True)
             if st.button("🚦 All Lights", use_container_width=True):
                 st.session_state.selected_sample = "sample_images/sample_all_lights.jpg"
+                st.session_state.auto_scroll = True
                 st.rerun()
             if st.button("🏙️ Multiple Lights", use_container_width=True):
                 st.session_state.selected_sample = "sample_images/sample_multiple_lights.jpg"
+                st.session_state.auto_scroll = True
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -606,11 +651,20 @@ with col1:
             st.markdown('<div class="sample-button">', unsafe_allow_html=True)
             if st.button("🌙 Night Scene", use_container_width=True):
                 st.session_state.selected_sample = "sample_images/sample_night_scene.jpg"
+                st.session_state.auto_scroll = True
                 st.rerun()
             if st.button("🎯 Challenging", use_container_width=True):
                 st.session_state.selected_sample = "sample_images/sample_challenging_scene.jpg"
+                st.session_state.auto_scroll = True
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
+
+        # Add instruction when sample is selected
+        if st.session_state.selected_sample:
+            st.info(
+                "📝 **Please scroll down to see the detect button and process your selected image!**"
+            )
+            st.markdown("---")
 
         if st.session_state.selected_sample:
             # Debug: Show current working directory and file path
@@ -672,15 +726,29 @@ with col1:
                             caption=f"Sample: {os.path.basename(image_path)}")
 
                     # Process the sample image
-                    col_btn1, col_btn2 = st.columns([2, 1])
-                    with col_btn1:
-                        if st.button("🚀 Detect Traffic Lights in Sample",
-                                     type="primary"):
-                            process_image(image, os.path.basename(image_path))
-                    with col_btn2:
-                        if st.button("❌ Clear Selection"):
-                            st.session_state.selected_sample = None
-                            st.rerun()
+                    # Create a container with ID for auto-scrolling
+                    st.markdown('<div id="detect-button-section"></div>',
+                                unsafe_allow_html=True)
+
+                    # Add a simple header for the detect section
+                    st.markdown("### 🚀 Ready to Detect Traffic Lights")
+
+                    detect_container = st.container()
+                    with detect_container:
+                        col_btn1, col_btn2 = st.columns([2, 1])
+                        with col_btn1:
+                            if st.button("🚀 Detect Traffic Lights in Sample",
+                                         type="primary"):
+                                process_image(image,
+                                              os.path.basename(image_path))
+                        with col_btn2:
+                            if st.button("❌ Clear Selection"):
+                                st.session_state.selected_sample = None
+                                st.rerun()
+
+                    # Reset the auto_scroll flag
+                    if st.session_state.get('auto_scroll', False):
+                        st.session_state.auto_scroll = False
                 else:
                     st.error("❌ Could not load the selected sample image.")
             else:
