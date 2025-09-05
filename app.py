@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Streamlit App for Traffic Light Detection System
+Traffic Light Detection System - Professional Web Interface
 
-A web interface for the real-time traffic light detection system.
-Users can upload videos or use webcam to detect traffic lights.
+A clean, modern web interface for real-time traffic light detection.
+Features: Image upload, video processing, sample content, and live detection.
 """
 
 # Robust OpenCV import with fallback - MUST be first
@@ -19,6 +19,7 @@ import numpy as np
 import tempfile
 import os
 from datetime import datetime
+from pathlib import Path
 
 # Show error if OpenCV failed to import
 if not OPENCV_AVAILABLE:
@@ -47,115 +48,159 @@ st.set_page_config(page_title="Traffic Light Detection System",
                    layout="wide",
                    initial_sidebar_state="expanded")
 
-# Custom CSS for better styling
+# Global session state initialization - do this at the very beginning
+# (Webcam functionality removed) Session state no longer initializes webcam flags.
+
+# Professional CSS styling
 st.markdown("""
 <style>
+    /* Main theme colors */
+    :root {
+        --primary-color: #1f4e3d;
+        --secondary-color: #28a745;
+        --accent-color: #ffc107;
+        --text-color: #2c3e50;
+        --bg-color: #f8f9fa;
+        --card-bg: #ffffff;
+        --border-color: #dee2e6;
+    }
+
+    /* Global styles */
     .main-header {
-        font-size: 3rem;
-        color: #1f4e3d;
+        font-size: 2.5rem;
+        color: var(--primary-color);
         text-align: center;
-        margin-bottom: 2rem;
-        font-weight: bold;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-    }
-    .sub-header {
-        font-size: 1.2rem;
-        color: #2c3e50;
-        text-align: center;
-        margin-bottom: 2rem;
-        font-weight: 500;
-    }
-    .info-box {
-        background-color: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 0.8rem;
-        border-left: 5px solid #28a745;
-        margin: 1rem 0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .info-box p, .info-box li, .info-box h4 {
-        color: #2c3e50 !important;
-        font-weight: 500 !important;
-    }
-    .info-box h4 {
-        font-weight: bold !important;
-        margin-bottom: 0.5rem !important;
-    }
-    .detection-stats {
-        background-color: #e8f5e8;
-        padding: 1.5rem;
-        border-radius: 0.8rem;
-        margin: 1rem 0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        border: 1px solid #c3e6cb;
-    }
-    .detection-stats p {
-        color: #2c3e50 !important;
-        font-weight: 600 !important;
-        margin: 0.5rem 0 !important;
-    }
-    .detection-stats h4 {
-        color: #1f4e3d !important;
-        font-weight: bold !important;
-        margin-bottom: 1rem !important;
-    }
-    .section-header {
-        color: #2c3e50;
-        font-weight: bold;
-        font-size: 1.3rem;
         margin-bottom: 1rem;
+        font-weight: 700;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
     }
-    .metric-value {
-        font-size: 2rem;
-        font-weight: bold;
-        color: #28a745;
-    }
-    .upload-area {
-        border: 2px dashed #28a745;
-        border-radius: 10px;
-        padding: 2rem;
+    
+    .sub-header {
+        font-size: 1.1rem;
+        color: var(--text-color);
         text-align: center;
-        background-color: #f8f9fa;
+        margin-bottom: 2rem;
+        font-weight: 400;
+        opacity: 0.8;
+    }
+
+    /* Card styling */
+    .detection-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border: 1px solid var(--border-color);
         margin: 1rem 0;
     }
+
+    .stats-card {
+        background: linear-gradient(135deg, #e8f5e8 0%, #f0f8f0 100%);
+        border-radius: 12px;
+        padding: 1.5rem;
+        text-align: center;
+        border: 1px solid #c3e6cb;
+        margin: 0.5rem 0;
+    }
+
+    /* Button styling */
     .stButton > button {
-        background-color: #28a745;
+        background: linear-gradient(135deg, var(--secondary-color) 0%, #20c997 100%);
         color: white;
         border: none;
         border-radius: 8px;
-        padding: 0.5rem 2rem;
-        font-weight: bold;
-        transition: all 0.3s;
+        padding: 0.75rem 2rem;
+        font-weight: 600;
+        font-size: 1rem;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
+
     .stButton > button:hover {
-        background-color: #218838;
         transform: translateY(-2px);
         box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        background: linear-gradient(135deg, #218838 0%, #1ea085 100%);
     }
-    .sidebar .stSelectbox label, .sidebar .stSlider label, .sidebar .stCheckbox label {
-        color: #2c3e50 !important;
+
+    /* Sample button styling */
+    .sample-btn {
+        background: var(--card-bg) !important;
+        color: var(--text-color) !important;
+        border: 2px solid var(--border-color) !important;
+        border-radius: 8px !important;
+        padding: 0.75rem 1rem !important;
+        font-weight: 500 !important;
+        transition: all 0.3s ease !important;
+        width: 100% !important;
+        margin: 0.25rem 0 !important;
+    }
+
+    .sample-btn:hover {
+        border-color: var(--secondary-color) !important;
+        background: #f8f9fa !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+    }
+
+    /* Upload area styling */
+    .upload-area {
+        border: 2px dashed var(--secondary-color);
+        border-radius: 12px;
+        padding: 2rem;
+        text-align: center;
+        background: #f8f9fa;
+        margin: 1rem 0;
+        transition: all 0.3s ease;
+    }
+
+    .upload-area:hover {
+        background: #e8f5e8;
+        border-color: var(--primary-color);
+    }
+
+    /* Metric styling */
+    .metric-container {
+        background: var(--card-bg);
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+        border: 1px solid var(--border-color);
+        margin: 0.5rem 0;
+    }
+
+    /* Sidebar styling */
+    .sidebar .stSelectbox label,
+    .sidebar .stSlider label,
+    .sidebar .stCheckbox label {
+        color: var(--text-color) !important;
         font-weight: 600 !important;
     }
-    .sample-button {
-        margin: 0.5rem 0 !important;
-        font-size: 0.9rem !important;
+
+    /* Hide Streamlit branding */
+        /* Hide Streamlit branding (keep header so sidebar can be reopened) */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        /* NOTE: Do NOT hide the header. Hiding it removes the hamburger needed to reopen the sidebar
+           after a user collapses it. */
+    
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
     }
-    .sample-button > button {
-        background-color: #6c757d !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 6px !important;
-        padding: 0.4rem 1rem !important;
-        font-weight: 500 !important;
-        transition: all 0.3s !important;
-        width: 100% !important;
+    ::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
     }
-    .sample-button > button:hover {
-        background-color: #5a6268 !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+    ::-webkit-scrollbar-thumb {
+        background: var(--secondary-color);
+        border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--primary-color);
     }
 </style>
+
+<!-- Webcam JavaScript removed -->
 """,
             unsafe_allow_html=True)
 
@@ -169,6 +214,58 @@ def get_detector():
 
 
 detector = get_detector()
+
+# ---------------------------------------------------------------------------
+# Resource path resolution helpers (for sample images/videos)
+# ---------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+
+# Try to auto-detect project root that actually contains sample folders
+_candidate_roots = [
+    BASE_DIR,
+    BASE_DIR.parent,
+    Path.cwd(),
+]
+PROJECT_ROOT = BASE_DIR
+for _cand in _candidate_roots:
+    if (_cand / 'sample_videos').is_dir() and (_cand /
+                                               'sample_images').is_dir():
+        PROJECT_ROOT = _cand
+        break
+
+
+def resolve_resource(rel_path: str):
+    """Return absolute path for a sample resource or None if not found.
+
+    Tries several candidate locations to be robust against different run dirs.
+    """
+    rel_path = rel_path.lstrip('/').replace('..', '')  # basic sanitation
+    candidates = [
+        Path(rel_path),
+        Path.cwd() / rel_path,
+        PROJECT_ROOT / rel_path,
+        BASE_DIR / rel_path,
+        BASE_DIR.parent / rel_path,
+    ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
+
+
+def debug_missing_resource_message(rel_path: str):
+    attempted = [
+        Path(rel_path),
+        Path.cwd() / rel_path,
+        PROJECT_ROOT / rel_path,
+        BASE_DIR / rel_path,
+        BASE_DIR.parent / rel_path,
+    ]
+    attempted_str = '\n'.join(f" - {p}" for p in attempted)
+    return (
+        f"Resource '{rel_path}' not found. Tried:\n{attempted_str}\n"
+        f"Current working dir: {Path.cwd()} | Script dir: {BASE_DIR} | Project root guess: {PROJECT_ROOT}"
+    )
 
 
 def create_debug_masks(image, detector):
@@ -254,14 +351,12 @@ def create_debug_masks(image, detector):
 
 def process_image(image, filename):
     """Process uploaded image and display results"""
-
     if image is None:
         st.error("❌ Could not process image. Please try again.")
         return
 
     # Get image properties
     height, width = image.shape[:2]
-    st.info(f"🖼️ Image Info: {width}x{height} pixels")
 
     # Create placeholders for image display
     image_placeholder = st.empty()
@@ -299,7 +394,7 @@ def process_image(image, filename):
         cv2.putText(result_image, label, (x + 5, y - 7),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-    # Add detection count info
+    # Count detections
     red_count = sum(1 for d in detections if d['color'] == 'Red')
     yellow_count = sum(1 for d in detections if d['color'] == 'Yellow')
     green_count = sum(1 for d in detections if d['color'] == 'Green')
@@ -316,32 +411,27 @@ def process_image(image, filename):
     cv2.putText(result_image, info_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
                 0.7, (255, 255, 255), 2)
 
-    # Initialize detection counts for this image
-    current_detection_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
-    for detection in detections:
-        color = detection.get('color', 'Unknown')
-        if color in current_detection_counts:
-            current_detection_counts[color] += 1
-
-    # Update session state for sidebar stats - reset counts for each new image
+    # Update session state for sidebar stats
+    current_detection_counts = {
+        'Red': red_count,
+        'Yellow': yellow_count,
+        'Green': green_count
+    }
     st.session_state.detection_counts = current_detection_counts.copy()
 
     # Convert BGR to RGB for display
     result_rgb = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
 
-    # Display original and processed images side by side
+    # Display results
     if show_debug:
         col1, col2, col3 = st.columns(3)
-
         with col1:
-            st.subheader("📸 Original Image")
+            st.subheader("📸 Original")
             original_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             st.image(original_rgb, channels="RGB", use_container_width=True)
-
         with col2:
             st.subheader("🎯 Detection Results")
             st.image(result_rgb, channels="RGB", use_container_width=True)
-
         with col3:
             st.subheader("🔍 Debug Masks")
             debug_image = create_debug_masks(image, detector)
@@ -352,50 +442,48 @@ def process_image(image, filename):
                 st.error("Could not generate debug masks")
     else:
         col1, col2 = st.columns(2)
-
         with col1:
             st.subheader("📸 Original Image")
             original_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             st.image(original_rgb, channels="RGB", use_container_width=True)
-
         with col2:
             st.subheader("🎯 Detection Results")
             st.image(result_rgb, channels="RGB", use_container_width=True)
 
     # Update status
-    status_text.text(f"✅ Processing complete! | "
-                     f"Red: {current_detection_counts['Red']} | "
-                     f"Yellow: {current_detection_counts['Yellow']} | "
-                     f"Green: {current_detection_counts['Green']}")
+    status_text.text(
+        f"✅ Processing complete! | Red: {red_count} | Yellow: {yellow_count} | Green: {green_count}"
+    )
 
     # Display final statistics
     st.success("✅ Image processing complete!")
 
-    # Display final statistics
+    # Display metrics
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("🔴 Red Lights", current_detection_counts['Red'])
+        st.metric("🔴 Red Lights", red_count)
     with col2:
-        st.metric("🟡 Yellow Lights", current_detection_counts['Yellow'])
+        st.metric("🟡 Yellow Lights", yellow_count)
     with col3:
-        st.metric("🟢 Green Lights", current_detection_counts['Green'])
+        st.metric("🟢 Green Lights", green_count)
 
     # Show detection details
     if any(current_detection_counts.values()):
-        st.subheader("🔍 Detection Details")
-        for i, detection in enumerate(detections):
-            x, y, w, h = detection['box']
-            color = detection.get('color', 'Unknown')
-            confidence = detection.get('confidence', 0)
+        with st.expander("🔍 Detection Details", expanded=False):
+            for i, detection in enumerate(detections):
+                x, y, w, h = detection['box']
+                color = detection.get('color', 'Unknown')
+                confidence = detection.get('confidence', 0)
+                st.write(
+                    f"**{color} Light #{i+1}** - Confidence: {confidence:.2f} - Position: ({x}, {y}) - Size: {w}x{h}"
+                )
 
-            st.write(
-                f"**{color} Light #{i+1}** - Confidence: {confidence:.2f} - Position: ({x}, {y}) - Size: {w}x{h}"
-            )
+
+## Webcam functionality removed to improve stability.
 
 
 def process_video(video_path):
     """Process uploaded video and display results"""
-
     # Initialize video capture
     cap = cv2.VideoCapture(video_path)
 
@@ -430,7 +518,7 @@ def process_video(video_path):
         # Process frame
         result_frame = detector.process_frame(frame)
 
-        # Count detections in current frame - use raw detections for better accuracy
+        # Count detections in current frame
         frame_detections = detector.detect_traffic_lights(frame)
         for detection in frame_detections:
             color = detection.get('color', 'Unknown')
@@ -465,10 +553,9 @@ def process_video(video_path):
         progress_bar.progress(progress)
 
         # Update status
-        status_text.text(f"Processing frame {frame_count}/{total_frames} | "
-                         f"Red: {detection_counts['Red']} | "
-                         f"Yellow: {detection_counts['Yellow']} | "
-                         f"Green: {detection_counts['Green']}")
+        status_text.text(
+            f"Processing frame {frame_count}/{total_frames} | Red: {detection_counts['Red']} | Yellow: {detection_counts['Yellow']} | Green: {detection_counts['Green']}"
+        )
 
         # Add small delay to make it viewable
         import time
@@ -477,7 +564,7 @@ def process_video(video_path):
     # Cleanup
     cap.release()
 
-    # Update session state for sidebar stats - reset counts for each video
+    # Update session state for sidebar stats
     st.session_state.detection_counts = detection_counts.copy()
 
     # Final results
@@ -510,50 +597,60 @@ if not OPENCV_AVAILABLE or not DETECTOR_AVAILABLE or detector is None:
 st.markdown('<h1 class="main-header">🚦 Traffic Light Detection System</h1>',
             unsafe_allow_html=True)
 st.markdown(
-    '<p class="sub-header">Real-time detection of Red, Yellow, and Green traffic lights using OpenCV and HSV color segmentation</p>',
+    '<p class="sub-header">Professional real-time detection of Red, Yellow, and Green traffic lights using advanced computer vision</p>',
     unsafe_allow_html=True)
 
 # Sidebar for controls
-st.sidebar.title("🎛️ Controls")
+with st.sidebar:
+    st.title("🎛️ Controls")
 
-# Detection settings
-st.sidebar.subheader("Detection Settings")
-confidence_threshold = st.sidebar.slider(
-    "Confidence Threshold",
-    min_value=0.1,
-    max_value=1.0,
-    value=0.45,
-    step=0.05,
-    help="Higher values = fewer but more confident detections")
+    # Detection settings
+    st.subheader("⚙️ Detection Settings")
+    confidence_threshold = st.slider(
+        "Confidence Threshold",
+        min_value=0.1,
+        max_value=1.0,
+        value=0.45,
+        step=0.05,
+        help="Higher values = fewer but more confident detections")
 
-show_debug = st.sidebar.checkbox("Show Debug Masks",
-                                 value=False,
-                                 help="Toggle color mask visualization")
+    show_debug = st.checkbox(
+        "Show Debug Masks",
+        value=False,
+        help="Toggle color mask visualization for advanced users")
 
-# Update detector settings
-detector.confidence_threshold = confidence_threshold
-detector.show_debug_masks = show_debug
-
-# Input method selection
-st.sidebar.subheader("Input Method")
-input_method = st.sidebar.radio(
-    "Choose input source:", [
-        "🖼️ Upload Image", "📹 Upload Video File", "📷 Use Webcam",
-        "📁 Sample Images"
-    ],
-    help="Select how you want to provide input for traffic light detection")
+    # Update detector settings
+    detector.confidence_threshold = confidence_threshold
+    detector.show_debug_masks = show_debug
 
 # Main content area
-col1, col2 = st.columns([2, 1])
+col1, col2 = st.columns([3, 1])
 
 with col1:
-    st.subheader("📸 Input")
+    st.subheader("📸 Input Source")
+
+    # Input method selection with better styling
+    input_method = st.radio(
+        "Choose your input method:",
+        ["🖼️ Upload Image", "📹 Upload Video", "📁 Sample Content"],
+        horizontal=True,
+        help=
+        "Select how you want to provide input for traffic light detection (webcam disabled for stability)"
+    )
+
+    # Store current input method in session state for webcam control
+    st.session_state.current_input_method = input_method
+
+    st.markdown("---")
 
     if input_method == "🖼️ Upload Image":
+        st.markdown('<div class="upload-area">', unsafe_allow_html=True)
         uploaded_image = st.file_uploader(
             "Choose an image file",
             type=['jpg', 'jpeg', 'png', 'bmp', 'tiff'],
-            help="Upload an image to detect traffic lights")
+            help="Upload an image to detect traffic lights",
+            label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
 
         if uploaded_image is not None:
             # Convert uploaded file to OpenCV format
@@ -564,14 +661,19 @@ with col1:
             st.success(f"✅ Image uploaded: {uploaded_image.name}")
 
             # Process image
-            if st.button("🚀 Detect Traffic Lights", type="primary"):
+            if st.button("🚀 Detect Traffic Lights",
+                         type="primary",
+                         use_container_width=True):
                 process_image(image, uploaded_image.name)
 
-    elif input_method == "📹 Upload Video File":
+    elif input_method == "📹 Upload Video":
+        st.markdown('<div class="upload-area">', unsafe_allow_html=True)
         uploaded_file = st.file_uploader(
             "Choose a video file",
             type=['mp4', 'avi', 'mov', 'mkv', 'wmv'],
-            help="Upload a video file to detect traffic lights")
+            help="Upload a video file to detect traffic lights",
+            label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
 
         if uploaded_file is not None:
             # Save uploaded file temporarily
@@ -585,194 +687,230 @@ with col1:
             st.success(f"✅ Video uploaded: {uploaded_file.name}")
 
             # Process video
-            if st.button("🚀 Start Detection", type="primary"):
+            if st.button("🚀 Start Detection",
+                         type="primary",
+                         use_container_width=True):
                 process_video(video_path)
 
-    elif input_method == "📷 Use Webcam":
-        st.info(
-            "💡 Webcam functionality requires running locally. For web deployment, please use image or video upload."
-        )
+    elif input_method == "📁 Sample Content":
+        st.markdown("### 🎯 Try Our Sample Content")
 
-        if st.button("📷 Start Webcam Detection", type="primary"):
-            st.warning(
-                "⚠️ Webcam access is not available in Streamlit Cloud. Please run locally or upload an image/video file."
-            )
+        # (Webcam option removed) Proceed with existing sample logic below.
 
-    elif input_method == "📁 Sample Images":
-        st.info(
-            "🎯 Choose from our sample images to test the detection system:")
+        # Sample content selection
+        sample_type = st.radio("Choose sample type:",
+                               ["📸 Sample Images", "🎬 Sample Video"],
+                               horizontal=True)
 
-        # Create columns for sample images
-        col1, col2, col3 = st.columns(3)
+        if sample_type == "📸 Sample Images":
+            st.markdown("Select a sample image to test the detection system:")
 
-        sample_images = {
-            "🔴 Red Light": "sample_images/sample_red_light.jpg",
-            "🟡 Yellow Light": "sample_images/sample_yellow_light.jpg",
-            "🟢 Green Light": "sample_images/sample_green_light.jpg",
-            "🚦 All Lights": "sample_images/sample_all_lights.jpg",
-            "🏙️ Multiple Lights": "sample_images/sample_multiple_lights.jpg",
-            "🌙 Night Scene": "sample_images/sample_night_scene.jpg",
-            "🎯 Challenging Scene": "sample_images/sample_challenging_scene.jpg"
-        }
+            # Sample images with better organization
+            sample_images = {
+                "🔴 Red Light": "sample_images/sample_red_light.jpg",
+                "🟡 Yellow Light": "sample_images/sample_yellow_light.jpg",
+                "🟢 Green Light": "sample_images/sample_green_light.jpg",
+                "🚦 All Lights": "sample_images/sample_all_lights.jpg",
+                "🏙️ Multiple Lights":
+                "sample_images/sample_multiple_lights.jpg",
+                "🌙 Night Scene": "sample_images/sample_night_scene.jpg",
+                "🎯 Challenging Scene":
+                "sample_images/sample_challenging_scene.jpg"
+            }
 
-        # Initialize selected sample in session state
-        if 'selected_sample' not in st.session_state:
-            st.session_state.selected_sample = None
+            # Initialize selected sample in session state
+            if 'selected_sample' not in st.session_state:
+                st.session_state.selected_sample = None
 
-        with col1:
-            st.markdown('<div class="sample-button">', unsafe_allow_html=True)
-            if st.button("🔴 Red Light", use_container_width=True):
-                st.session_state.selected_sample = "sample_images/sample_red_light.jpg"
-                st.session_state.auto_scroll = True
-                st.rerun()
-            if st.button("🟡 Yellow Light", use_container_width=True):
-                st.session_state.selected_sample = "sample_images/sample_yellow_light.jpg"
-                st.session_state.auto_scroll = True
-                st.rerun()
-            if st.button("🟢 Green Light", use_container_width=True):
-                st.session_state.selected_sample = "sample_images/sample_green_light.jpg"
-                st.session_state.auto_scroll = True
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
+            # Create a grid of sample buttons
+            cols = st.columns(2)
+            for i, (name, path) in enumerate(sample_images.items()):
+                with cols[i % 2]:
+                    if st.button(name,
+                                 key=f"sample_{i}",
+                                 use_container_width=True):
+                        st.session_state.selected_sample = path
+                        st.rerun()
 
-        with col2:
-            st.markdown('<div class="sample-button">', unsafe_allow_html=True)
-            if st.button("🚦 All Lights", use_container_width=True):
-                st.session_state.selected_sample = "sample_images/sample_all_lights.jpg"
-                st.session_state.auto_scroll = True
-                st.rerun()
-            if st.button("🏙️ Multiple Lights", use_container_width=True):
-                st.session_state.selected_sample = "sample_images/sample_multiple_lights.jpg"
-                st.session_state.auto_scroll = True
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
+            # Process selected sample
+            if st.session_state.selected_sample:
+                rel_path = st.session_state.selected_sample
+                image_path = resolve_resource(rel_path)
 
-        with col3:
-            st.markdown('<div class="sample-button">', unsafe_allow_html=True)
-            if st.button("🌙 Night Scene", use_container_width=True):
-                st.session_state.selected_sample = "sample_images/sample_night_scene.jpg"
-                st.session_state.auto_scroll = True
-                st.rerun()
-            if st.button("🎯 Challenging", use_container_width=True):
-                st.session_state.selected_sample = "sample_images/sample_challenging_scene.jpg"
-                st.session_state.auto_scroll = True
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
+                if image_path is not None:
+                    image = cv2.imread(image_path)
+                    if image is not None:
+                        st.success(
+                            f"✅ Selected: {os.path.basename(image_path)}")
 
-        # Add instruction when sample is selected
-        if st.session_state.selected_sample:
-            st.info(
-                "📝 **Please scroll down to see the detect button and process your selected image!**"
-            )
-            st.markdown("---")
-
-        if st.session_state.selected_sample:
-            # Debug: Show current working directory and file path
-            current_dir = os.getcwd()
-            full_path = os.path.abspath(st.session_state.selected_sample)
-
-            # Try different possible paths
-            possible_paths = [
-                st.session_state.selected_sample,  # Relative path
-                os.path.join(current_dir, st.session_state.selected_sample
-                             ),  # Current dir + relative
-                os.path.join(
-                    os.path.dirname(__file__),
-                    st.session_state.selected_sample),  # Script dir + relative
-            ]
-
-            image_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    image_path = path
-                    break
-
-            if image_path:
-                # Load and display the selected sample image
-                image = cv2.imread(image_path)
-                if image is not None:
-                    st.success(f"✅ Selected: {os.path.basename(image_path)}")
-
-                    # Add instruction
-                    st.info(
-                        "💡 Click the button below to detect traffic lights in this image"
-                    )
-
-                    # Display the sample image
-                    if show_debug:
-                        col_img1, col_img2 = st.columns(2)
-                        with col_img1:
+                        # Display the sample image
+                        if show_debug:
+                            col_img1, col_img2 = st.columns(2)
+                            with col_img1:
+                                st.image(
+                                    cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
+                                    channels="RGB",
+                                    use_container_width=True,
+                                    caption=
+                                    f"Sample: {os.path.basename(image_path)}")
+                            with col_img2:
+                                debug_image = create_debug_masks(
+                                    image, detector)
+                                if debug_image is not None:
+                                    debug_rgb = cv2.cvtColor(
+                                        debug_image, cv2.COLOR_BGR2RGB)
+                                    st.image(debug_rgb,
+                                             channels="RGB",
+                                             use_container_width=True,
+                                             caption="Debug Masks")
+                                else:
+                                    st.error("Could not generate debug masks")
+                        else:
                             st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
                                      channels="RGB",
                                      use_container_width=True,
                                      caption=
                                      f"Sample: {os.path.basename(image_path)}")
-                        with col_img2:
-                            debug_image = create_debug_masks(image, detector)
-                            if debug_image is not None:
-                                debug_rgb = cv2.cvtColor(
-                                    debug_image, cv2.COLOR_BGR2RGB)
-                                st.image(debug_rgb,
-                                         channels="RGB",
-                                         use_container_width=True,
-                                         caption="Debug Masks")
-                            else:
-                                st.error("Could not generate debug masks")
-                    else:
-                        st.image(
-                            cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
-                            channels="RGB",
-                            use_container_width=True,
-                            caption=f"Sample: {os.path.basename(image_path)}")
 
-                    # Process the sample image
-                    # Create a container with ID for auto-scrolling
-                    st.markdown('<div id="detect-button-section"></div>',
-                                unsafe_allow_html=True)
-
-                    # Add a simple header for the detect section
-                    st.markdown("### 🚀 Ready to Detect Traffic Lights")
-
-                    detect_container = st.container()
-                    with detect_container:
+                        # Process button
                         col_btn1, col_btn2 = st.columns([2, 1])
                         with col_btn1:
                             if st.button("🚀 Detect Traffic Lights in Sample",
-                                         type="primary"):
+                                         type="primary",
+                                         use_container_width=True):
                                 process_image(image,
                                               os.path.basename(image_path))
                         with col_btn2:
-                            if st.button("❌ Clear Selection"):
+                            if st.button("❌ Clear", use_container_width=True):
                                 st.session_state.selected_sample = None
-                                st.rerun()
-
-                    # Reset the auto_scroll flag
-                    if st.session_state.get('auto_scroll', False):
-                        st.session_state.auto_scroll = False
+                    else:
+                        st.error("❌ Could not load the selected sample image.")
                 else:
-                    st.error("❌ Could not load the selected sample image.")
-            else:
-                st.warning(
-                    f"⚠️ Sample images not found. Current directory: {current_dir}"
-                )
-                st.warning(f"Looking for: {st.session_state.selected_sample}")
-                st.warning(f"Tried paths: {possible_paths}")
-                st.info(
-                    "💡 Make sure you're running the app from the project root directory."
-                )
+                    st.warning("⚠️ Sample image not found.")
+                    with st.expander("Why is this missing?", expanded=False):
+                        st.code(debug_missing_resource_message(rel_path))
+
+        elif sample_type == "🎬 Sample Video":
+            st.markdown("### 🎬 Sample Video Detection")
+            st.info("Select a sample video to test the detection system.")
+
+            # Sample videos with better organization
+            sample_videos = {
+                "🔴 Red Light Video": "sample_videos/sample_red_light.mp4",
+                "🟡 Yellow Light Video":
+                "sample_videos/sample_yellow_light.mp4",
+                "🟢 Green Light Video": "sample_videos/sample_green_light.mp4",
+                "🚦 All Lights Video": "sample_videos/sample_all_lights.mp4",
+                "🏙️ Multiple Lights Video":
+                "sample_videos/sample_multiple_lights.mp4",
+                "🌙 Night Scene Video": "sample_videos/sample_night_scene.mp4",
+                "🎯 Challenging Scene Video":
+                "sample_videos/sample_challenging_scene.mp4",
+                "🔴 Red Bottom Video": "sample_videos/sample_red_bottom.mp4",
+                "🔴 Red Left Video": "sample_videos/sample_red_left.mp4",
+                "🔴 Red Right Video": "sample_videos/sample_red_right.mp4",
+                "🔴 Red Top Video": "sample_videos/sample_red_top.mp4"
+            }
+
+            # Initialize selected sample video in session state
+            if 'selected_sample_video' not in st.session_state:
+                st.session_state.selected_sample_video = None
+
+            # Create a grid of sample video buttons
+            cols = st.columns(2)
+            for i, (name, path) in enumerate(sample_videos.items()):
+                with cols[i % 2]:
+                    if st.button(name,
+                                 key=f"sample_video_{i}",
+                                 use_container_width=True):
+                        st.session_state.selected_sample_video = path
+                        st.rerun()
+
+            # Process selected sample video
+            if st.session_state.selected_sample_video:
+                rel_video = st.session_state.selected_sample_video
+                video_path = resolve_resource(rel_video)
+
+                if video_path is not None:
+                    st.success(f"✅ Selected: {os.path.basename(video_path)}")
+
+                    # Get video info
+                    cap = cv2.VideoCapture(video_path)
+                    if cap.isOpened():
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        duration = total_frames / fps if fps > 0 else 0
+                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        cap.release()
+
+                        st.info(
+                            f"📹 Video Info: {width}x{height}, {total_frames} frames, {fps:.1f} FPS, {duration:.1f}s duration"
+                        )
+
+                        # Process button
+                        col_btn1, col_btn2 = st.columns([2, 1])
+                        with col_btn1:
+                            if st.button("🚀 Process Sample Video",
+                                         type="primary",
+                                         use_container_width=True):
+                                process_video(video_path)
+                        with col_btn2:
+                            if st.button("❌ Clear", use_container_width=True):
+                                st.session_state.selected_sample_video = None
+                                st.rerun()
+                    else:
+                        st.error(
+                            "❌ Could not read the selected sample video file.")
+                else:
+                    st.warning("⚠️ Sample video not found.")
+                    with st.expander("Why is this missing?", expanded=False):
+                        st.code(debug_missing_resource_message(rel_video))
 
 with col2:
-    st.subheader("📊 Detection Info")
+    st.subheader("📊 Detection Statistics")
 
-    # Info box
+    # Initialize detection counts
+    if 'detection_counts' not in st.session_state:
+        st.session_state.detection_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
+
+    # Display stats using custom styling
+    st.markdown('<div class="stats-card">', unsafe_allow_html=True)
+
+    total_detections = sum(st.session_state.detection_counts.values())
+    if total_detections == 0:
+        st.info(
+            "ℹ️ No detections yet. Select content and click 'Detect Traffic Lights' to see results."
+        )
+    else:
+        col_red, col_yellow, col_green = st.columns(3)
+        with col_red:
+            st.metric("🔴 Red", st.session_state.detection_counts['Red'])
+        with col_yellow:
+            st.metric("🟡 Yellow", st.session_state.detection_counts['Yellow'])
+        with col_green:
+            st.metric("🟢 Green", st.session_state.detection_counts['Green'])
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Clear stats button
+    if st.button("🔄 Clear Stats", use_container_width=True):
+        st.session_state.detection_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
+        st.session_state.cumulative_detection_counts = {
+            'Red': 0,
+            'Yellow': 0,
+            'Green': 0
+        }
+
+    # Information panel
     st.markdown("""
-    <div class="info-box">
+    <div class="detection-card">
         <h4>🔍 How it works:</h4>
         <ul>
             <li>HSV color segmentation</li>
             <li>Adaptive preprocessing</li>
             <li>Contour filtering</li>
-            <li>Tracking & smoothing</li>
+            <li>Real-time tracking</li>
         </ul>
         <br>
         <h4>📸 Supported formats:</h4>
@@ -784,72 +922,29 @@ with col2:
     """,
                 unsafe_allow_html=True)
 
-    # Detection stats - dynamic based on session state
-    if 'detection_counts' not in st.session_state:
-        st.session_state.detection_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
-
-    # Use Streamlit native components for better reactivity
-    st.markdown("""
-    <div class="detection-stats">
-        <h4>📈 Detection Stats:</h4>
-    </div>
-    """,
-                unsafe_allow_html=True)
-
-    # Check if any detection has been run
-    total_detections = sum(st.session_state.detection_counts.values())
-    if total_detections == 0:
-        st.info(
-            "ℹ️ No detections yet. Select an image and click 'Detect Traffic Lights' to see results."
-        )
-
-    # Display stats using Streamlit metrics for better reactivity
-    col_red, col_yellow, col_green = st.columns(3)
-    with col_red:
-        st.metric("🔴 Red", st.session_state.detection_counts['Red'])
-    with col_yellow:
-        st.metric("🟡 Yellow", st.session_state.detection_counts['Yellow'])
-    with col_green:
-        st.metric("🟢 Green", st.session_state.detection_counts['Green'])
-
-    # Debug info
-    if st.checkbox("Show Debug Info"):
-        st.write("Session state detection_counts:",
-                 st.session_state.detection_counts)
-        st.write("Session state keys:", list(st.session_state.keys()))
-        if 'selected_sample' in st.session_state:
-            st.write("Selected sample:", st.session_state.selected_sample)
-
-    # Clear stats button
-    if st.button("🔄 Clear Stats", use_container_width=True):
-        st.session_state.detection_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
-        st.rerun()
-
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style='text-align: center; color: #666;'>
-    <p>🚦 Traffic Light Detection System | Built with OpenCV & Streamlit</p>
-    <p>Real-time HSV-based color detection with adaptive preprocessing</p>
+<div style='text-align: center; color: #666; padding: 1rem;'>
+    <p><strong>🚦 Traffic Light Detection System</strong></p>
+    <p>Built with OpenCV & Streamlit | Professional Computer Vision Solution</p>
 </div>
 """,
             unsafe_allow_html=True)
 
-# Instructions for local testing
-if st.sidebar.checkbox("Show Local Testing Instructions"):
-    st.sidebar.markdown("""
-    **To test locally:**
-    1. Install: `pip install streamlit`
-    2. Run: `streamlit run app.py`
-    3. Open: http://localhost:8501
-    """)
-
-# Instructions for deployment
-if st.sidebar.checkbox("Show Deployment Instructions"):
-    st.sidebar.markdown("""
-    **To deploy to Streamlit Cloud:**
-    1. Push code to GitHub
-    2. Go to share.streamlit.io
-    3. Connect your repo
-    4. Deploy!
-    """)
+# Advanced options in sidebar
+with st.sidebar:
+    st.markdown("---")
+    if st.checkbox("🔧 Advanced Options"):
+        st.markdown("""
+        **Local Testing:**
+        1. Install: `pip install streamlit`
+        2. Run: `streamlit run app.py`
+        3. Open: http://localhost:8501
+        
+        **Deployment:**
+        1. Push code to GitHub
+        2. Go to share.streamlit.io
+        3. Connect your repo
+        4. Deploy!
+        """)

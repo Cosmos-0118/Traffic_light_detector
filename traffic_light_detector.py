@@ -15,27 +15,57 @@ from datetime import datetime
 class AutoTrafficLightDetector:
 
     def __init__(self):
-        # HSV color ranges for traffic lights - more inclusive ranges
+        # HSV color ranges for traffic lights - more restrictive for webcam
         self.color_ranges = {
             'Red': [
                 {
-                    'lower': np.array([0, 20, 100]),
+                    'lower': np.array([0, 70, 150]),
                     'upper': np.array([10, 255, 255])
                 },
                 {
-                    'lower': np.array([170, 20, 100]),
+                    'lower': np.array([170, 70, 150]),
                     'upper': np.array([180, 255, 255])
                 },
             ],
             'Yellow': [
                 {
-                    'lower': np.array([20, 20, 100]),
-                    'upper': np.array([40, 255, 255])
+                    'lower': np.array([
+                        20, 100, 170
+                    ]),  # Increased saturation and value minimums for yellow
+                    'upper': np.array([38, 255, 255])
                 },
             ],
             'Green': [
                 {
-                    'lower': np.array([45, 20, 100]),
+                    'lower': np.array([45, 70, 150]),
+                    'upper': np.array([75, 255, 255])
+                },
+            ],
+        }
+
+        # More restrictive ranges for webcam detection
+        self.webcam_color_ranges = {
+            'Red': [
+                {
+                    'lower': np.array([0, 90, 170]),
+                    'upper': np.array([10, 255, 255])
+                },
+                {
+                    'lower': np.array([170, 90, 170]),
+                    'upper': np.array([180, 255, 255])
+                },
+            ],
+            'Yellow': [
+                {
+                    'lower': np.array([
+                        20, 120, 200
+                    ]),  # Even more restrictive for webcam yellow detection
+                    'upper': np.array([38, 255, 255])
+                },
+            ],
+            'Green': [
+                {
+                    'lower': np.array([45, 90, 170]),
                     'upper': np.array([75, 255, 255])
                 },
             ],
@@ -48,13 +78,24 @@ class AutoTrafficLightDetector:
         self.min_area_ratio = 0.0001  # 0.01% of frame (increased for better detection)
         self.max_area_ratio = 0.15  # 15% of frame (increased for better detection)
         self.min_circularity = 0.15
-        self.min_color_purity = 0.05
+        self.min_color_purity = 0.12  # Increased from 0.05 to reduce false positives
         self.blur_kernel_size = (5, 5)  # Will be scaled dynamically
-        self.confidence_threshold = 0.35
+        self.confidence_threshold = 0.45  # Increased from 0.35 to ensure more confident detections
+
+        # Webcam-specific parameters (more restrictive)
+        self.webcam_confidence_threshold = 0.60  # Increased from 0.55
+        self.webcam_min_circularity = 0.25
+        self.webcam_min_color_purity = 0.20  # Increased from 0.15
+
         # Illumination gates - relaxed for better detection
         self.min_mean_v = 20
         self.min_luminous_fraction = 0.02
         self.min_brightness_contrast = 1
+
+        # Webcam-specific illumination gates (more restrictive)
+        self.webcam_min_mean_v = 80
+        self.webcam_min_luminous_fraction = 0.15
+        self.webcam_min_brightness_contrast = 30
 
         # Preprocessing normalization
         self.enable_gray_world = True
@@ -66,12 +107,20 @@ class AutoTrafficLightDetector:
         # Debug toggle (press 'd' in window)
         self.show_debug_masks = False
 
+        # Mode detection - True for webcam/video, False for static images
+        self.is_webcam_mode = False
+
         # Tracking configuration
         self.tracks = [
         ]  # list of dicts: id, box, confidence, color_history, hits, misses, confirmed
         self.next_track_id = 1
+
         self.iou_match_threshold = 0.3
-        self.max_missed_frames = 8
+        # How many frames to keep unmatched tracks before deletion.
+        # Unconfirmed (still warming up) tracks get a few extra frames for stability.
+        self.max_missed_frames = 8  # for unconfirmed tracks (not rendered)
+        # Confirmed (rendered) tracks should disappear quickly once lost so the box/count drops fast.
+        self.max_missed_frames_confirmed = 2  # was effectively 8 before
         self.required_hits_to_confirm = 3
         self.smooth_alpha = 0.6  # higher = more weight on previous
         self.conf_smooth_alpha = 0.5
@@ -176,10 +225,15 @@ class AutoTrafficLightDetector:
         for tr in self.tracks:
             if not tr.get('matched'):
                 tr['misses'] += 1
-            # light decay of confidence when missed
-            if tr['misses'] > 0:
-                tr['confidence'] *= 0.95
-            if tr['misses'] <= self.max_missed_frames:
+                # Accelerated confidence decay for confirmed tracks so they drop out quickly
+                if tr['confirmed']:
+                    tr['confidence'] *= 0.7
+                else:
+                    tr['confidence'] *= 0.95
+            # Retention threshold depends on confirmation state
+            max_miss = self.max_missed_frames_confirmed if tr[
+                'confirmed'] else self.max_missed_frames
+            if tr['misses'] <= max_miss:
                 kept.append(tr)
         self.tracks = kept
 
@@ -304,6 +358,24 @@ class AutoTrafficLightDetector:
         # Calculate dynamic parameters based on frame size
         dynamic_params = self._calculate_dynamic_params(frame)
 
+        # Choose color ranges and parameters based on mode
+        if self.is_webcam_mode:
+            color_ranges = self.webcam_color_ranges
+            confidence_threshold = self.webcam_confidence_threshold
+            min_circularity = self.webcam_min_circularity
+            min_color_purity = self.webcam_min_color_purity
+            min_mean_v = self.webcam_min_mean_v
+            min_luminous_fraction = self.webcam_min_luminous_fraction
+            min_brightness_contrast = self.webcam_min_brightness_contrast
+        else:
+            color_ranges = self.color_ranges
+            confidence_threshold = self.confidence_threshold
+            min_circularity = self.min_circularity
+            min_color_purity = self.min_color_purity
+            min_mean_v = self.min_mean_v
+            min_luminous_fraction = self.min_luminous_fraction
+            min_brightness_contrast = self.min_brightness_contrast
+
         # Pre-processing: white-balance, gamma, blur
         pre = self._gray_world_white_balance(frame)
         pre = self._auto_gamma_correct(pre)
@@ -344,7 +416,7 @@ class AutoTrafficLightDetector:
 
         # Iterate colors
         for color in ['Red', 'Yellow', 'Green']:
-            ranges = self.color_ranges[color]
+            ranges = color_ranges[color]
             color_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
             for r in ranges:
                 mask = cv2.inRange(hsv, r['lower'], r['upper'])
@@ -394,7 +466,7 @@ class AutoTrafficLightDetector:
                 perimeter = cv2.arcLength(contour, True)
                 circularity = 4 * np.pi * area / (
                     perimeter * perimeter) if perimeter > 0 else 0
-                if circularity < self.min_circularity and aspect_ratio < 0.8:
+                if circularity < min_circularity and aspect_ratio < 0.8:
                     continue
 
                 roi_v = v[y:y + h, x:x + w]
@@ -422,27 +494,46 @@ class AutoTrafficLightDetector:
                 else:
                     brightness_contrast = mean_v
 
-                if mean_v < self.min_mean_v:
+                if mean_v < min_mean_v:
                     continue
-                if luminous_fraction < self.min_luminous_fraction:
+                if luminous_fraction < min_luminous_fraction:
                     continue
-                if brightness_contrast < self.min_brightness_contrast:
+                if brightness_contrast < min_brightness_contrast:
                     continue
 
                 color_purity = np.sum(
                     color_mask[y:y + h, x:x + w]) / (255 * w * h) if (w *
                                                                       h) else 0
-                if color_purity < self.min_color_purity:
+                if color_purity < min_color_purity:
                     continue
 
-                # Confidence: balance of geometry, purity, and brightness
+                # Improved confidence calculation: balance of geometry, purity, and brightness
                 aspect_conf = 1.0 - min(abs(2.5 - aspect_ratio) / 2.5, 1.0)
                 circ_conf = min(circularity / 0.9, 1.0)
                 purity_conf = min(color_purity * 2.0, 1.0)
                 bright_conf = min(mean_v / 160.0, 1.0)
-                confidence = 0.25 * aspect_conf + 0.25 * circ_conf + 0.3 * purity_conf + 0.2 * bright_conf
+                contrast_conf = min(brightness_contrast / 100.0, 1.0)
 
-                if confidence >= self.confidence_threshold:
+                # Color-specific confidence adjustments
+                if color == 'Yellow':
+                    # Yellow requires higher purity and brightness to avoid false positives
+                    purity_weight = 0.35
+                    bright_weight = 0.25
+                    contrast_weight = 0.2
+                    geo_weight = 0.2  # Combined for aspect and circularity
+
+                    # Yellow typically needs to be very bright
+                    if mean_v < 140 or purity_conf < 0.6:
+                        confidence = 0.0  # Reject dim yellow detections
+                    else:
+                        confidence = geo_weight * (
+                            aspect_conf + circ_conf
+                        ) / 2 + purity_weight * purity_conf + bright_weight * bright_conf + contrast_weight * contrast_conf
+                else:
+                    # Standard weighting for red and green
+                    confidence = 0.25 * aspect_conf + 0.25 * circ_conf + 0.25 * purity_conf + 0.15 * bright_conf + 0.1 * contrast_conf
+
+                if confidence >= confidence_threshold:
                     detections.append({
                         'color': color,
                         'box': (x, y, w, h),
@@ -457,29 +548,53 @@ class AutoTrafficLightDetector:
                 region = cmask[y:y + h, x:x + w]
                 scores[cname] = int(np.sum(region))
             if scores:
-                # Bias rule: if Green is close to Yellow, prefer Yellow
+                # Improved bias rules for better color classification
                 green_score = scores.get('Green', 0)
                 yellow_score = scores.get('Yellow', 0)
                 red_score = scores.get('Red', 0)
+
+                # Only classify as Yellow if there's a significant yellow signal
                 if yellow_score > 0 and green_score > 0:
-                    if green_score <= int(yellow_score * 1.15):
+                    # Higher threshold to ensure yellow is truly stronger than green
+                    if yellow_score > green_score * 1.4:
                         d['color'] = 'Yellow'
                         continue
-                # Hue median tie-break inside ROI
+                    # If green dominates, prefer green
+                    elif green_score > yellow_score * 1.2:
+                        d['color'] = 'Green'
+                        continue
+                # Enhanced hue median tie-break inside ROI with intensity check
                 hsv_roi = hsv[y:y + h, x:x + w]
                 if hsv_roi.size > 0:
                     roi_h = hsv_roi[:, :, 0]
-                    med_h = int(np.median(roi_h))
-                    # More precise hue-based classification
-                    if 0 <= med_h <= 10 or 170 <= med_h <= 180:
-                        d['color'] = 'Red'
-                        continue
-                    elif 20 <= med_h <= 40:
-                        d['color'] = 'Yellow'
-                        continue
-                    elif 45 <= med_h <= 75:
-                        d['color'] = 'Green'
-                        continue
+                    roi_s = hsv_roi[:, :, 1]
+                    roi_v = hsv_roi[:, :, 2]
+
+                    # Only consider pixels with sufficient saturation and value
+                    valid_mask = (roi_s > 100) & (roi_v > 150)
+                    valid_hues = roi_h[valid_mask] if np.any(
+                        valid_mask) else roi_h
+
+                    if valid_hues.size > 0:
+                        med_h = int(np.median(valid_hues))
+
+                        # More precise hue-based classification with tighter bounds
+                        if 0 <= med_h <= 10 or 170 <= med_h <= 180:
+                            d['color'] = 'Red'
+                            continue
+                        elif 22 <= med_h <= 38:  # Narrower yellow range
+                            # Additional check: sufficient saturation and brightness for yellow
+                            yellow_intensity = np.mean(
+                                roi_v[(roi_h >= 22)
+                                      & (roi_h <= 38)]) if np.any(
+                                          (roi_h >= 22)
+                                          & (roi_h <= 38)) else 0
+                            if yellow_intensity > 180:  # Only if bright enough
+                                d['color'] = 'Yellow'
+                                continue
+                        elif 45 <= med_h <= 75:
+                            d['color'] = 'Green'
+                            continue
                 voted = max(scores.items(), key=lambda kv: kv[1])[0]
                 d['color'] = voted
 
@@ -495,6 +610,10 @@ class AutoTrafficLightDetector:
                                                    min_distance_threshold=25)
         # Additional false positive filtering
         detections = self._filter_false_positives(detections, frame)
+
+        # Webcam-specific filtering to remove vehicle lights
+        if self.is_webcam_mode:
+            detections = self._filter_vehicle_lights(detections, frame)
 
         # Enhanced final pass: remove overlapping detections regardless of color
         final = []
@@ -669,9 +788,11 @@ class AutoTrafficLightDetector:
 
         filtered_detections = []
         frame_height, frame_width = frame.shape[:2]
+        hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
         for detection in detections:
             x, y, w, h = detection['box']
+            color = detection['color']
 
             # Skip detections too close to edges (likely partial detections)
             if x < 10 or y < 10 or x + w > frame_width - 10 or y + h > frame_height - 10:
@@ -690,6 +811,127 @@ class AutoTrafficLightDetector:
             # Skip detections that are too small in absolute terms
             if detection_area < 100:  # Very small detections
                 continue
+
+            # Additional validation for yellow detections (more prone to false positives)
+            if color == 'Yellow':
+                roi_hsv = hsv_frame[y:y + h, x:x + w]
+                if roi_hsv.size > 0:
+                    # Check saturation and value channels
+                    s_channel = roi_hsv[:, :, 1]
+                    v_channel = roi_hsv[:, :, 2]
+
+                    # Calculate statistics
+                    mean_s = np.mean(s_channel)
+                    mean_v = np.mean(v_channel)
+
+                    # Skip yellow detections with low saturation or brightness
+                    if mean_s < 100 or mean_v < 150:
+                        continue
+
+                    # Check if there's sufficient contrast against background
+                    pad = min(20, min(w, h) // 2)
+                    x1_bg = max(0, x - pad)
+                    y1_bg = max(0, y - pad)
+                    x2_bg = min(frame_width, x + w + pad)
+                    y2_bg = min(frame_height, y + h + pad)
+
+                    # Create background mask (surrounding area but not the detection itself)
+                    bg_mask = np.ones((y2_bg - y1_bg, x2_bg - x1_bg),
+                                      dtype=np.uint8)
+                    rel_y, rel_x = y - y1_bg, x - x1_bg
+                    bg_mask[rel_y:rel_y + h, rel_x:rel_x + w] = 0
+
+                    # Calculate background statistics if there's valid background
+                    if np.any(bg_mask):
+                        bg_hsv = hsv_frame[y1_bg:y2_bg, x1_bg:x2_bg]
+                        bg_v = bg_hsv[:, :, 2]
+                        bg_v_mean = np.mean(bg_v[bg_mask > 0]) if np.any(
+                            bg_mask > 0) else 0
+
+                        # Skip if contrast is too low (yellow light vs background)
+                        if mean_v - bg_v_mean < 50:  # Requiring higher contrast for yellow
+                            continue
+
+            filtered_detections.append(detection)
+
+        return filtered_detections
+
+    def _filter_vehicle_lights(self, detections, frame):
+        """
+        Filter out vehicle lights and other moving light sources for webcam mode.
+        Uses heuristics based on size, position, and brightness patterns.
+        """
+        if not detections:
+            return []
+
+        filtered_detections = []
+        frame_height, frame_width = frame.shape[:2]
+
+        for detection in detections:
+            x, y, w, h = detection['box']
+            center_x = x + w / 2
+            center_y = y + h / 2
+
+            # Skip if detection is too close to edges (likely partial vehicle lights)
+            edge_margin = min(50, frame_width * 0.1)
+            if (x < edge_margin or y < edge_margin
+                    or x + w > frame_width - edge_margin
+                    or y + h > frame_height - edge_margin):
+                continue
+
+            # Skip very small detections (likely noise or distant vehicle lights)
+            detection_area = w * h
+            if detection_area < 200:  # Very small detections
+                continue
+
+            # Skip detections that are too large (likely not traffic lights)
+            if detection_area > 5000:  # Very large detections
+                continue
+
+            # Skip detections in the bottom third of the frame (likely vehicle lights)
+            if center_y > frame_height * 0.67:
+                continue
+
+            # Skip detections that are too wide relative to height (vehicle light pattern)
+            aspect_ratio = w / h if h > 0 else 0
+            if aspect_ratio > 2.5:  # Too wide for typical traffic lights
+                continue
+
+            # Check for horizontal alignment with other detections (vehicle light pattern)
+            has_horizontal_neighbor = False
+            for other in detections:
+                if other == detection:
+                    continue
+                ox, oy, ow, oh = other['box']
+                other_center_x = ox + ow / 2
+                other_center_y = oy + oh / 2
+
+                # Check if horizontally aligned and similar size
+                y_distance = abs(center_y - other_center_y)
+                x_distance = abs(center_x - other_center_x)
+                size_ratio = min(
+                    detection_area, other['box'][2] * other['box'][3]) / max(
+                        detection_area, other['box'][2] * other['box'][3])
+
+                if (y_distance < 30 and x_distance > 50 and x_distance < 200
+                        and size_ratio > 0.7):
+                    has_horizontal_neighbor = True
+                    break
+
+            # If has horizontal neighbor and is in lower half, likely vehicle lights
+            if has_horizontal_neighbor and center_y > frame_height * 0.5:
+                continue
+
+            # Check brightness uniformity (traffic lights are more uniform)
+            roi = frame[y:y + h, x:x + w]
+            if roi.size > 0:
+                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                brightness_std = np.std(gray_roi)
+                brightness_mean = np.mean(gray_roi)
+
+                # Skip if too much brightness variation (vehicle lights often have hotspots)
+                if brightness_std > 40 and brightness_mean > 150:
+                    continue
 
             filtered_detections.append(detection)
 
@@ -881,6 +1123,9 @@ class AutoTrafficLightDetector:
             image_path: Path to the image file
             save_output: Whether to save the processed image
         """
+        # Set image mode (not webcam)
+        self.is_webcam_mode = False
+
         # Read the image
         image = cv2.imread(image_path)
         if image is None:
@@ -912,6 +1157,9 @@ class AutoTrafficLightDetector:
         """
         if image is None:
             return None
+
+        # Ensure image mode is set
+        self.is_webcam_mode = False
 
         # Make a copy for visualization
         annotated_image = image.copy()
@@ -973,6 +1221,9 @@ class AutoTrafficLightDetector:
             source: Camera index (0 for webcam) or video file path
             save_output: Whether to save the processed video
         """
+        # Set webcam mode for video sources
+        self.is_webcam_mode = True
+
         # Initialize video capture
         try:
             if isinstance(source, str) and (source.isdigit() or source == '0'):
