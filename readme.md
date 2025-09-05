@@ -1,184 +1,95 @@
-## Traffic Lights Tracker + Detection ##
+# Traffic Light Detection (OpenCV + HSV)
 
-### OpenCV ###
+Real-time detection of traffic lights (Red/Yellow/Green) from webcam or a video file using OpenCV. The detector applies HSV color segmentation with adaptive preprocessing and draws labeled boxes with confidence scores. A minimal UI is included to select sources and optionally save processed output.
 
-This algorithm attempts to identify traffic lights color assuming there's some movement on static cameras based on climatic conditions. In order to do that, it applies a combination of a MOSSE tracker, with a freehand rectangle.
+## Features
 
-**Why this combination?**
+- **Automatic color detection**: Robust HSV ranges for Red, Yellow, Green
+- **Adaptive preprocessing**: Gray-world white balance, auto gamma, CLAHE
+- **Noise handling**: Morphology, contour filters, brightness/saturation gates
+- **Tracking and smoothing**: Simple IoU-based track management with lock-on
+- **Heuristics**: Basic separation of traffic lights vs vehicle lights
+- **UI launcher**: Simple OpenCV-based menu for webcam/video selection
+- **Optional recording**: Save annotated output to MP4 with timestamp
 
-Because under certain conditions, like light changes caused by day-night cycles, the MOSSE tracker may lose the traffic lights because the edges of the object may become blurry or even unexistant. 
+## Quick Start
 
-This problem can be solved by applying a bigger region of interest for the tracker, which can be immune to light changes due to its content. But this implies adding a drawback: Tracking the exact color of the traffic light on a way bigger region. 
+### 1) Run via the UI (recommended)
 
-To solve the second question, we'll draw a second ROI manually, inside the already chosen one for the MOSSE tracker, starting from the top left corner (that's just a personal choice).
-
-### Import main modules ###
-
-Pretty much all we'll need is OpenCV and Numpy.
-
-
-```python
-# Install opencv
-!pip install opencv-contrib-python
+```bash
+./run_detector.sh
 ```
 
-    Requirement already satisfied: opencv-contrib-python in c:\users\usuario\anaconda3\lib\site-packages (4.8.0.76)
-    Requirement already satisfied: numpy>=1.21.2 in c:\users\usuario\anaconda3\lib\site-packages (from opencv-contrib-python) (1.24.3)
-    
+The script will create a virtual environment (../.venv), install dependencies from `requirements.txt`, and launch the UI. In the UI:
 
+- Press `1` to use a webcam (choose numeric ID, usually `0`)
+- Press `2` to provide a video file path
+- Choose whether to save the processed output
+- Press `q` in the video window to quit; press `d` to toggle debug masks
 
-```python
-import cv2
-print("OpenCV version:", cv2.__version__)
-import numpy as np
-from IPython.display import Image, display, clear_output
+### 2) Run directly from the CLI
+
+```bash
+python traffic_light_detector.py --source 0 --output
 ```
 
-    OpenCV version: 4.8.0
-    
+- **--source / -s**: Camera index like `0` or a video file path
+- **--output / -o**: When present, saves the processed video to an MP4 file
 
-### Inference functions ###
+Example with a file:
 
-
-```python
-def predict_color(frame):
-    
-    color_found = 'undefined'
-    
-    # Color thresholds.
-
-    color_list = [
-        ['Red', [0, 120, 70], [10, 255, 255]],
-        ['Yellow', [12, 55, 80], [32, 255, 255]],
-        ['Green / Off', [50, 5, 150], [86, 250, 250]],
-        ['Red', [170, 120, 70], [180, 255, 255]]
-    ]
-    
-        
-    # Change to HSV spectrum.
-    
-    hsv_img = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-    # The state of the light is the one with the greatest number of white pixels.
-        
-    max_count = 0
-    
-    for color_name, lower_val, upper_val in color_list:
-        # Threshold the HSV image - any matching color will show up as white.
-        mask = cv2.inRange(hsv_img, np.array(lower_val), np.array(upper_val))
-        # Count white pixels on mask.
-        count = np.sum(mask)
-        if count > max_count:
-            color_found = color_name
-            max_count = count
-            
-    if max_count < 1600:  # Arbitrary threshold to define when it's off (rare cases, mostly at night).
-        color_found = "Green / Off"
-    
-    lightColor = color_found
-
-    if lightColor == 'red':
-        class_id = 'Red'
-    elif lightColor == 'yellow':
-        class_id = 'Yellow'
-    elif lightColor == 'green':
-        class_id = 'Green'
-    print(lightColor)
-
-    return lightColor
+```bash
+python traffic_light_detector.py -s "/path/to/video.mp4" -o
 ```
 
-**Runtime**
+## Installation
 
-First, before the tracking loop starts, it will ask for how many lights we want to track. Determining the ROI's follow a simple 
-pattern of 'Define the outer ROI for MOSSE + define inner ROI for the traffic light'.
+If you prefer manual setup:
 
-
-```python
-if __name__ == "__main__":
-    
-    # Sets the number of traffic lights.
-    
-    traffic_lights_count = int(input('Set a number of traffic light: \n'))
-    TL_list = []
-    vid = cv2.VideoCapture("semaforo2_resized.mp4")
-    ok, frame = vid.read()
-    
-    # For each traffic light, choose outer and inner ROI's.
-    
-    for i in range(traffic_lights_count):
-
-        print('Select a ROI to track:')
-        initial_box = cv2.selectROI('image', frame)
-        tracker = cv2.legacy.TrackerMOSSE.create()
-        print('Select an area to track INSIDE the ROI')
-        x_box, y_box, w_box, h_box = cv2.selectROI('image', frame)
-        inside_box = (x_box, y_box, w_box, h_box)
-        TL_list.append((tracker, initial_box, inside_box))
-
-    while True:
-        ok, fr = vid.read()
-        
-        # Breaks the loop if the video is over.
-        
-        if fr is None:
-            break
-        
-        # For each tracker, it will update the color detected inside
-        
-        for tracker, initial_box, inside_box in TL_list:
-            if initial_box is not None:
-                (success, box) = tracker.update(fr)
-                if success:
-                    (x, y, w, h) = [int(v) for v in box]
-
-                    x2_inside = x
-                    y2_inside = y
-                    w2_inside = min(w_box, w)
-                    h2_inside = min(h_box, h)
-                    prediction = None
-                    frame_piece = fr[y2_inside:y2_inside + h2_inside, x2_inside:x2_inside + w2_inside]
-                    prediction = predict_color(frame_piece)
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 0.5
-                    thickness = 1
-
-                    if prediction == 'Green / Off':
-                        color = (0, 255, 0)
-                    elif prediction == 'Red':
-                        color = (0, 0, 255)
-                    elif prediction == 'Yellow':
-                        color = (255, 255, 0)
-
-                    cv2.putText(fr, prediction, (x2_inside, y2_inside - 10), font, font_scale, color, thickness)
-                tracker.init(fr, initial_box)
-        
-        #cv2.imshow("image", fr) -> That's the option if you're not in Jupyter Notebook, otherwise:
-        
-        clear_output(wait=True) # Cleans previous frame in Jupyter Notebook
-        display(Image(data=cv2.imencode('.png', fr)[1].tobytes()))
-
-        key = cv2.waitKey(200) & 0xFF
-
-    cv2.destroyAllWindows()
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt
 ```
 
+Dependencies (see `requirements.txt`):
 
-   
+- opencv-contrib-python (≥ 4.5.0)
+- numpy (≥ 1.20.0)
 
+## Controls & Output
 
-**Output sample**
+- **Keys**: `q` quits, `d` toggles color mask debug panel
+- **Boxes/labels**: Color name, type guess, track id, and confidence
+- **Saved video**: If enabled, file name like `auto_traffic_light_detection_YYYYMMDD_HHMMSS.mp4`
 
+## Tips & Troubleshooting
 
-```python
-display(Image(filename='sample_final.gif'))
-display(Image(filename='sample_night.gif'))
-```
+- **No camera feed / black window**: Check the `--source` index; try `0` or another number. Ensure another app isn’t using the camera.
+- **Could not open video source**: The path may be wrong or unsupported. Try absolute paths and common formats (MP4, AVI, MOV, MKV).
+- **Low detections**: Try brighter footage, point at larger signals, or press `d` to view masks and verify colors are captured.
+- **Performance**: Reduce input resolution or close other apps. CPU-only processing; no GPU is required.
 
-![sample_final](https://github.com/RomeroRodriguezD/Traffic-Lights-Tracking-and-Color-Detection-OpenCV/assets/105886661/681ece28-cbda-4b47-801c-072c537c43b4)
-![sample_night](https://github.com/RomeroRodriguezD/Traffic-Lights-Tracking-and-Color-Detection-OpenCV/assets/105886661/b66a4794-546e-4f58-bf1d-2bfe58fd02ca)
+## Project Structure
 
+- `traffic_light_detector.py`: Core detector and CLI
+- `simple_ui.py`: OpenCV-based menu to pick source and save option
+- `run_detector.sh`: Helper script to set up venv, install deps, and launch UI
+- `requirements.txt`: Minimal dependencies
 
-### Conclusions ###
+## How it works (high level)
 
-Even though the light changes and movement are a hard challenge, the combination of trackers looks quite accurate, even at night, since it just tend to lose the color under sunlight (where colors become a mess in general) or under some rare random condition.
+1. Preprocess each frame: white-balance, gamma correction, blur, HSV+CLAHE
+2. Build color masks per class and clean with morphology/median filtering
+3. Find candidate contours and filter by size, aspect ratio, circularity, and brightness
+4. Score detections (geometry, purity, brightness) and apply NMS
+5. Track across frames, smooth boxes/confidence, and label majority color
+
+## License
+
+MIT (or project’s original license). If you use this work, consider crediting the repository and authors.
+
+## Acknowledgements
+
+Built with OpenCV and NumPy. Thanks to the open-source community for tools and prior art on HSV-based traffic light detection.
