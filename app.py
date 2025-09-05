@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 import math
 import random
+from PIL import Image
+import io
 
 # Show error if OpenCV failed to import
 if not OPENCV_AVAILABLE:
@@ -30,6 +32,44 @@ if not OPENCV_AVAILABLE:
     )
     st.error("Try: pip install opencv-python-headless")
     st.stop()
+
+
+# Function to check and install dependencies
+def ensure_dependencies():
+    missing_deps = []
+    try:
+        import cv2
+    except ImportError:
+        missing_deps.append('opencv-python-headless>=4.8.0')
+
+    try:
+        import numpy
+    except ImportError:
+        missing_deps.append('numpy>=1.20.0')
+
+    try:
+        from PIL import Image
+    except ImportError:
+        missing_deps.append('Pillow>=8.0.0')
+
+    # Auto-install missing dependencies (streamlit is obviously available if we're here)
+    if missing_deps:
+        st.warning(
+            f"Installing missing dependencies: {', '.join(missing_deps)}")
+        import subprocess
+        for dep in missing_deps:
+            try:
+                subprocess.check_call(['pip', 'install', dep])
+                st.success(f"Installed {dep}")
+            except Exception as e:
+                st.error(f"Failed to install {dep}: {e}")
+        st.info("Please restart the application after installing dependencies")
+        st.stop()
+
+
+# Call dependency check function
+if st.session_state.get('is_web_environment', False):
+    ensure_dependencies()
 
 # Only import detector if OpenCV is available
 if OPENCV_AVAILABLE:
@@ -51,7 +91,22 @@ st.set_page_config(page_title="Traffic Light Detection System",
                    initial_sidebar_state="expanded")
 
 # Global session state initialization - do this at the very beginning
-# (Webcam functionality removed) Session state no longer initializes webcam flags.
+# Detect environment and optimize accordingly
+if 'is_web_environment' not in st.session_state:
+    # Check if running in a cloud environment by looking at environment variables
+    import os
+    is_cloud = any([
+        os.environ.get('STREAMLIT_SHARING') == 'true',
+        os.environ.get('IS_STREAMLIT_CLOUD') == 'true',
+        os.environ.get('HOSTNAME', '').endswith('.streamlit.app'),
+        os.environ.get('STREAMLIT_SERVER_HEADLESS') == 'true',
+    ])
+    st.session_state.is_web_environment = is_cloud
+
+# Set performance optimizations based on environment
+if 'performance_optimized' not in st.session_state:
+    st.session_state.performance_optimized = True  # Enable by default
+    st.session_state.frame_skip = 0  # No frame skipping by default
 
 # Professional CSS styling
 st.markdown("""
@@ -724,10 +779,14 @@ def process_video(video_path):
     fps = cap.get(cv2.CAP_PROP_FPS) or 18
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
-    # Hosted fallback: if the encoded mp4 yields too few frames (likely codec issue),
-    # rebuild synthetic frames in memory so visual effects remain.
+    # Enhanced codec handling for web environments
+    # Rebuild synthetic frames in memory for better web compatibility
     in_memory_frames = None
-    if total_frames < 8:  # heuristic: far too small for our 5s synthetic clips
+
+    # More aggressive frame rebuilding in web environments or if frames are too few
+    rebuild_threshold = 8 if not st.session_state.get('is_web_environment',
+                                                      False) else 20
+    if total_frames < rebuild_threshold:  # More aggressive for web environments
         fname = Path(video_path).name
         specs = synthetic_video_specs()
         if fname in specs:
@@ -768,10 +827,24 @@ def process_video(video_path):
     # Counters (count unique confirmed tracks per frame rather than raw detections to avoid overcount)
     cumulative_counts = {'Red': 0, 'Yellow': 0, 'Green': 0}
     frame_index = 0
+    processed_frames = 0
+    skipped_frames = 0
 
-    # Warmup: run one detection to build dynamic params cache faster (first frame often slower)
+    # Performance optimization settings
+    is_web = st.session_state.get('is_web_environment', False)
+    # Use user-selected frame skip from session state if available
+    frame_skip = st.session_state.get('frame_skip', 0)
+    # Default behavior if not set in session state
+    if frame_skip == 0 and st.session_state.get('performance_optimized',
+                                                True) and is_web:
+        frame_skip = 2  # Default to aggressive optimization for web
+
+    # Calculate processing metrics
     import time
     t0 = time.time()
+    fps_start_time = time.time()
+    fps_frame_count = 0
+    current_fps = 0
 
     # Detect if detector.process_frame supports the new keyword arg once (compat for hosted older code)
     import inspect
@@ -792,8 +865,25 @@ def process_video(video_path):
             ret, frame = cap.read()
             if not ret:
                 break
+
         frame_iter += 1
         frame_index += 1
+
+        # Implement frame skipping for performance optimization
+        # Skip frames based on environment and settings, but process every keyframe
+        if frame_skip > 0 and (frame_index %
+                               (frame_skip + 1) != 0) and frame_index > 1:
+            skipped_frames += 1
+            continue
+
+        processed_frames += 1
+
+        # Calculate real-time FPS for performance monitoring
+        fps_frame_count += 1
+        if time.time() - fps_start_time >= 1.0:
+            current_fps = fps_frame_count / (time.time() - fps_start_time)
+            fps_frame_count = 0
+            fps_start_time = time.time()
         try:
             if _supports_kw:
                 # Preferred modern path
@@ -841,26 +931,73 @@ def process_video(video_path):
                 debug_rgb = cv2.cvtColor(debug_image, cv2.COLOR_BGR2RGB)
                 frame_rgb = np.hstack([frame_rgb, debug_rgb])
 
-        video_placeholder.image(frame_rgb,
-                                channels="RGB",
-                                use_container_width=True)
+        # Optimize image display with reduced quality in web environments for performance
+        if st.session_state.get('is_web_environment', False):
+            # For web: Compress image to reduce bandwidth and improve performance
+            # Convert to PIL Image
+            pil_img = Image.fromarray(frame_rgb)
 
-        # Progress & status
+            # Reduce size for web display if needed
+            max_width = 800  # Limit width to reduce data transfer
+            if pil_img.width > max_width:
+                ratio = max_width / pil_img.width
+                new_height = int(pil_img.height * ratio)
+                pil_img = pil_img.resize((max_width, new_height),
+                                         Image.LANCZOS)
+
+            # Display the optimized image
+            video_placeholder.image(pil_img,
+                                    channels="RGB",
+                                    use_container_width=True)
+        else:
+            # For local: Use full quality
+            video_placeholder.image(frame_rgb,
+                                    channels="RGB",
+                                    use_container_width=True)
+
+        # Progress & status with enhanced information
         if total_frames > 0:
             progress_bar.progress(min(1.0, frame_index / total_frames))
-        status_text.text(
-            f"Frame {frame_index}/{total_frames if total_frames else '?'} | Red: {cumulative_counts['Red']} | Yellow: {cumulative_counts['Yellow']} | Green: {cumulative_counts['Green']}"
-        )
 
-        # Adaptive small sleep to avoid overwhelming Streamlit UI; faster after first 10 frames
-        if frame_index < 10:
-            time.sleep(0.03)
+        # Show real-time performance metrics
+        status_msg = f"Frame {frame_index}/{total_frames if total_frames else '?'}"
+        status_msg += f" | FPS: {current_fps:.1f}" if current_fps > 0 else ""
+        status_msg += f" | Red: {cumulative_counts['Red']} | Yellow: {cumulative_counts['Yellow']} | Green: {cumulative_counts['Green']}"
+        if skipped_frames > 0:
+            status_msg += f" | Skipped: {skipped_frames}"
+        status_text.text(status_msg)
+
+        # Adaptive frame processing for web vs local environments
+        # Reduce sleep times significantly, especially for web environments
+        # Only apply minimal sleep to prevent UI thread blocking
+        if st.session_state.get('is_web_environment', False):
+            # Web environment: minimal to no sleep
+            pass  # No sleep for web deployment to maximize performance
         else:
-            time.sleep(0.01)
+            # Local environment: minimal sleep to prevent UI overload
+            if frame_index < 10:
+                time.sleep(0.01)  # Reduced from 0.03
+            else:
+                time.sleep(0.005)  # Reduced from 0.01
 
     cap.release()
     st.session_state.detection_counts = cumulative_counts.copy()
-    st.success("✅ Video processing complete!")
+
+    # Show appropriate completion message with performance stats
+    elapsed_time = time.time() - t0
+    avg_fps = processed_frames / elapsed_time if elapsed_time > 0 else 0
+
+    completion_msg = f"✅ Video processing complete! Processed {processed_frames} frames in {elapsed_time:.1f}s ({avg_fps:.1f} FPS)"
+    if skipped_frames > 0:
+        completion_msg += f", skipped {skipped_frames} frames for performance"
+
+    st.success(completion_msg)
+
+    # Show web optimization message if applicable
+    if st.session_state.get('is_web_environment', False):
+        st.info(
+            "🌐 Web optimization active - performance has been enhanced for smoother online experience"
+        )
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -911,6 +1048,43 @@ with st.sidebar:
         "Show Debug Masks",
         value=False,
         help="Toggle color mask visualization for advanced users")
+
+    # Performance optimization settings
+    st.subheader("🚀 Performance Settings")
+
+    performance_optimized = st.checkbox(
+        "Optimize for Web Performance",
+        value=st.session_state.get('performance_optimized', True),
+        help="Enable performance optimizations for better web experience")
+
+    if performance_optimized:
+        frame_skip_options = st.selectbox(
+            "Frame Processing",
+            options=[
+                "Normal (Process All)", "Fast (Skip 1 Frame)",
+                "Fastest (Skip 2 Frames)"
+            ],
+            index=2
+            if st.session_state.get('is_web_environment', False) else 0,
+            help=
+            "Controls how many frames are skipped during processing. Skip more frames for better performance but potentially reduced detection accuracy."
+        )
+
+        # Update frame skip based on selection
+        if frame_skip_options == "Normal (Process All)":
+            st.session_state.frame_skip = 0
+        elif frame_skip_options == "Fast (Skip 1 Frame)":
+            st.session_state.frame_skip = 1
+        else:  # Fastest
+            st.session_state.frame_skip = 2
+    else:
+        st.session_state.frame_skip = 0
+
+    # Status indicator for environment
+    if st.session_state.get('is_web_environment', False):
+        st.info("🌐 Running in web environment")
+    else:
+        st.success("🖥️ Running in local environment")
 
     # Update detector settings
     detector.confidence_threshold = confidence_threshold
